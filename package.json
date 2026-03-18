@@ -1,0 +1,48 @@
+{
+  "name": "@aaqu/fromcubes-portal-react",
+  "version": "0.1.0-alpha.7",
+  "description": "Fromcubes Portal - React for Node-RED with Tailwind CSS and auto complete",
+  "keywords": [
+    "node-red",
+    "dashboard",
+    "portal",
+    "jsx",
+    "tailwind",
+    "websocket",
+    "fromcubes"
+  ],
+  "node-red": {
+    "nodes": {
+      "portal-react": "nodes/portal-react.js"
+    }
+  },
+  "files": [
+    "nodes/",
+    "examples/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "esbuild": "^0.27.4",
+    "monaco-editor": "^0.55.1",
+    "tailwindcss": "^4.2.1"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "scripts": {
+    "build": "node scripts/bundle-react.js",
+    "start": "node-red"
+  },
+  "license": "Apache-2.0",
+  "author": "aaqu",
+  "publishConfig": {
+    "access": "public"
+  }
+}
