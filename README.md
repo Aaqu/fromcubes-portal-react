@@ -1,6 +1,10 @@
 # @aaqu/fromcubes-portal-react
 
+> **⚠️ Alpha Module** — This project is in early development. Expect many breaking changes. Please test on a clean Node-RED instance.
+
 React portal node for Node-RED. Server-side JSX transpilation via esbuild. Tailwind CSS 4. Zero runtime compilation in browser.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L01UOFRG)
 
 ## How it works
 
