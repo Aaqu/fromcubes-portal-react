@@ -810,7 +810,7 @@
         <label for="node-input-endpoint"
           ><i class="fa fa-globe"></i> Endpoint</label
         >
-        <input type="text" id="node-input-endpoint" placeholder="/portal" />
+        <input type="text" id="node-input-endpoint" placeholder="/fromcubes" />
         <div
           style="font-size:11px;opacity:.5;margin-top:2px;margin-left:105px;"
           id="fc-url-hint"
@@ -821,6 +821,15 @@
           ><i class="fa fa-file-text-o"></i> Title</label
         >
         <input type="text" id="node-input-pageTitle" placeholder="Portal" />
+      </div>
+      <div class="form-row node-input-libs-container-row">
+        <label style="width:auto;"><i class="fa fa-archive"></i> Modules</label>
+        <ol id="node-input-libs-container"></ol>
+        <div
+          style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;"
+        >
+          npm packages to bundle. Node-RED auto-installs them at deploy time.
+        </div>
       </div>
       <div class="form-row" style="margin-top:12px;">
         <label style="width:auto;">
@@ -917,8 +926,8 @@
           <code>email</code>, <code>role</code>, <code>groups</code><br />
           &bull; Messages from WebSocket include <code>msg._client</code> with
           user data<br /><br />
-          Requires <code>@aaqu/node-red-dashboard-2-portal-auth</code> Nginx
-          setup.
+          Requires Nginx (or similar reverse proxy) to set
+          <code>X-Portal-*</code> headers.
         </div>
       </div>
     </div>
@@ -945,7 +954,7 @@
       "",
       "  return (",
       '    <div className="min-h-screen bg-zinc-950 p-8">',
-      '      <h1 className="text-2xl font-light text-cyan-400 mb-6">Portal</h1>',
+      '      <h1 className="text-2xl font-light text-cyan-400 mb-6">fromcubes</h1>',
       '      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">',
       '        <StatusCard label="Value" value={d.value ?? "—"} unit="" />',
       "      </div>",
@@ -965,12 +974,13 @@
       color: "#61dafb",
       defaults: {
         name: { value: "" },
-        endpoint: { value: "/portal", required: true },
-        pageTitle: { value: "Portal" },
+        endpoint: { value: "/fromcubes", required: true },
+        pageTitle: { value: "fromcubes" },
         componentCode: { value: STARTER },
         customHead: { value: "" },
         portalAuth: { value: false },
         showWsStatus: { value: false },
+        libs: { value: [] },
       },
       inputs: 1,
       outputs: 1,
@@ -1022,11 +1032,31 @@
 
         // URL hint
         function updateHint() {
-          var ep = $("#node-input-endpoint").val() || "/portal";
+          var ep = $("#node-input-endpoint").val() || "/fromcubes";
           $("#fc-url-hint").text("Page served at: http://<host>:1880" + ep);
         }
         $("#node-input-endpoint").on("input", updateHint);
         updateHint();
+
+        // Modules editableList (like function node's libs)
+        var libsList = node.libs || [];
+        $("#node-input-libs-container").css("min-height","68px").editableList({
+          addItem: function(container, i, opt) {
+            var lib = opt || {};
+            var row = $('<div/>',{style:"display:flex;gap:8px;align-items:center;"}).appendTo(container);
+            var modInput = $('<input/>',{type:"text",placeholder:"e.g. chart.js/auto@^4.4.0",style:"flex:1;"}).appendTo(row);
+            var varInput = $('<input/>',{type:"text",placeholder:"Import as (e.g. Chart)",style:"width:140px;"}).appendTo(row);
+            modInput.val(lib.module || "");
+            varInput.val(lib.var || "");
+            container.data("mod", modInput);
+            container.data("var", varInput);
+          },
+          removable: true,
+          sortable: true
+        });
+        libsList.forEach(function(lib) {
+          $("#node-input-libs-container").editableList("addItem", lib);
+        });
 
         // Monaco
         window.__fcLoadMonaco(function (failed) {
@@ -1183,6 +1213,19 @@
 
       oneditsave: function () {
         console.log("[FC-Monaco] PORTAL oneditsave");
+
+        // Collect libs from editableList
+        var libs = [];
+        var items = $("#node-input-libs-container").editableList("items");
+        items.each(function() {
+          var mod = $(this).data("mod").val().trim();
+          var v = $(this).data("var").val().trim();
+          if (mod) {
+            libs.push({ module: mod, var: v });
+          }
+        });
+        this.libs = libs;
+
         var code = editorInstance
           ? editorInstance.getValue()
           : $("#fc-fallback").val();
@@ -1303,8 +1346,7 @@ const { data, send } = useNodeRed();
   <h3>Portal Auth</h3>
   <p>
     When enabled in the Auth tab, reads <code>X-Portal-*</code> headers set by
-    an Nginx proxy (via <code>@aaqu/node-red-dashboard-2-portal-auth</code>) and
-    exposes user data:
+    a reverse proxy (e.g. Nginx) and exposes user data:
   </p>
   <ul>
     <li><code>useNodeRed()</code> returns <code>{ data, send, user }</code></li>

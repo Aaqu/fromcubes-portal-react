@@ -5,27 +5,34 @@ React portal node for Node-RED. Server-side JSX transpilation via esbuild. Tailw
 ## How it works
 
 ```
-┌─ Deploy time (Node-RED server) ──────────────────────────┐
-│                                                          │
-│  JSX (editor)  ──►  esbuild transpile  ──►  cached JS    │
-│                     (hash-keyed cache)                   │
-│                                                          │
-│  Tailwind classes  ──►  server-side compile ──► CSS file │
-│                         (hash-keyed cache)               │
-│                                                          │
-│  Unchanged code on redeploy = cache hit, 0ms             │
-│  Changed code = retranspile, ~5ms                        │
-└──────────────────────────────────────────────────────────┘
+┌─ Deploy time (Node-RED server) ───────────────────────────┐
+│                                                           │
+│  npm packages  ──►  auto-installed at deploy              │
+│       (d3, three, chart.js…)  via dynamicModuleList       │
+│                                                           │
+│  React + packages  ──►  esbuild bundle  ──►  vendor.js    │
+│       single IIFE, one React instance                     │
+│       cached by hash(names + versions)                    │
+│                                                           │
+│  JSX (editor)  ──►  esbuild transpile  ──►  cached JS     │
+│       packages marked external → require() shim           │
+│                                                           │
+│  Tailwind classes  ──►  server-side compile  ──►  CSS     │
+│       hash-keyed cache                                    │
+│                                                           │
+│  Unchanged code on redeploy = cache hit, 0ms              │
+│  Changed code = retranspile, ~5ms                         │
+└───────────────────────────────────────────────────────────┘
 
-┌─ Runtime (browser) ──────────────────────────────────────┐
-│                                                          │
-│  GET /endpoint  ──►  HTML + pre-compiled JS              │
-│                      react-19.production.min.js          │
-│                      Tailwind CSS (server-compiled)      │
-│                      NO Babel, NO Sucrase, NO compiler   │
-│                                                          │
-│  WebSocket /endpoint/_ws  ◄──►  Node-RED msg I/O         │
-└──────────────────────────────────────────────────────────┘
+┌─ Runtime (browser) ───────────────────────────────────────┐
+│                                                           │
+│  GET /endpoint  ──►  HTML + pre-compiled JS               │
+│                      vendor bundle (React + packages)     │
+│                      Tailwind CSS (server-compiled)       │
+│                      NO Babel, NO Sucrase, NO compiler    │
+│                                                           │
+│  WebSocket /endpoint/_ws  ◄──►  Node-RED msg I/O          │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ## Install
@@ -42,20 +49,20 @@ Dependencies install automatically. No build step needed.
 
 | Script | Purpose |
 |---|---|
-| `npm run build` | Rebuild vendored React bundle (`nodes/vendor/react-19.production.min.js`) |
 | `npm start` | Start Node-RED |
 
 ## Nodes
 
 ### portal-react
 
-| Field | Purpose |
-|---|---|
-| Endpoint | HTTP path, e.g. `/dashboard` |
-| Page Title | Browser tab title |
-| Portal Auth | Enable portal user header extraction |
-| Head HTML | Extra `<head>` tags (CDN, fonts, CSS) |
-| Code Editor | Monaco with JSX — must define `<App />` |
+| Field | Purpose                                                          |
+|---|------------------------------------------------------------------|
+| Endpoint | HTTP path, e.g. `/fromcubes/page1`                               |
+| Page Title | Browser tab title                                                |
+| npm Packages | Comma-separated packages, e.g. `d3, three, chart.js/auto@^4.4.0` |
+| Portal Auth | Enable portal user header extraction                             |
+| Head HTML | Extra `<head>` tags (CDN, fonts, CSS)                            |
+| Code Editor | Monaco with JSX — must define `<App />`                          |
 
 ### fc-component-library (config node)
 
@@ -127,12 +134,21 @@ Transpile errors:
 
 | Asset | Size (gzip) |
 |---|---|
-| react-19.production.min.js | ~45 KB |
+| Vendor bundle (React + packages) | ~45 KB React only, grows with packages |
 | Your transpiled JS | ~1-5 KB |
 | Tailwind CSS (server-compiled) | cached per content hash |
 | WebSocket bridge | <1 KB |
 
 No Babel, no Sucrase client, no Vue, no Vuetify, no Socket.IO.
+
+## Examples
+
+| Flow | npm packages | Description |
+|---|---|---|
+| `sensor-portal-flow.json` | — | Basic sensor gauge with live WebSocket data |
+| `chart-portal-flow.json` | `chart.js/auto` | Live updating Chart.js chart |
+| `d3-poland-flow.json` | `d3` | Interactive SVG map of Poland (simulated data) |
+| `threejs-portal-flow.json` | `three` | 3D scene with Three.js |
 
 ## License
 

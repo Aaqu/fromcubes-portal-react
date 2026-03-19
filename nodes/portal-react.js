@@ -11,16 +11,6 @@ const fs = require("fs");
 const path = require("path");
 const esbuild = require("esbuild");
 
-const reactBundle = fs.readFileSync(
-  path.join(__dirname, "vendor", "react-19.production.min.js"),
-  "utf8",
-);
-const reactHash = crypto
-  .createHash("sha256")
-  .update(reactBundle)
-  .digest("hex")
-  .slice(0, 10);
-
 module.exports = function (RED) {
   // ── Admin root prefix (for correct URLs when httpAdminRoot is set) ──
   const adminRoot = (RED.settings.httpAdminRoot || "/").replace(/\/$/, "");
@@ -63,6 +53,12 @@ module.exports = function (RED) {
   }
   const rebuildCallbacks = RED.settings.fcRebuildCallbacks;
 
+  // Vendor bundle cache: cacheKey → { js, hash }
+  if (!RED.settings.fcVendorCache) {
+    RED.settings.fcVendorCache = {};
+  }
+  const vendorCache = RED.settings.fcVendorCache;
+
   // ── Helpers ───────────────────────────────────────────────────
 
   function hash(str) {
@@ -92,12 +88,112 @@ module.exports = function (RED) {
     return twCompiled;
   }
 
-  function transpile(jsx) {
+  // Package root — where react/react-dom live (this package's own node_modules)
+  const pkgRoot = path.join(__dirname, "..");
+  // userDir — where dynamicModuleList installs user packages
+  const userDir = RED.settings.userDir || path.join(__dirname, "../../..");
+  // esbuild resolveDir: package root (react is here); nodePaths adds userDir for user libs
+  const resolveDir = pkgRoot;
+
+  function getPackageName(moduleSpec) {
+    const m = moduleSpec.match(/^((?:@[^/]+\/)?[^/]+)/);
+    return m ? m[1] : moduleSpec;
+  }
+
+  function getInstalledVersion(pkgName) {
+    try {
+      const pkgJson = require(
+        require.resolve(pkgName + "/package.json", { paths: [pkgRoot, userDir] }),
+      );
+      return pkgJson.version;
+    } catch {
+      return null;
+    }
+  }
+
+  function buildVendorBundle(libs) {
+    const lines = [
+      'import React from "react";',
+      'import ReactDOM from "react-dom";',
+      'import { createRoot } from "react-dom/client";',
+      "window.React = React;",
+      "window.ReactDOM = ReactDOM;",
+      "window.ReactDOM.createRoot = createRoot;",
+    ];
+    if (libs.length > 0) {
+      lines.push("if(!window.__pkg) window.__pkg = {};");
+      libs.forEach((lib, i) => {
+        lines.push(`import * as __p${i} from ${JSON.stringify(lib.module)};`);
+        lines.push(`window.__pkg[${JSON.stringify(lib.module)}] = __p${i};`);
+      });
+    }
+    const contents = lines.join("\n");
+    const buildResult = esbuild.buildSync({
+      stdin: { contents, resolveDir, loader: "js" },
+      bundle: true,
+      format: "iife",
+      minify: true,
+      write: false,
+      target: ["es2020"],
+      define: { "process.env.NODE_ENV": '"production"' },
+      nodePaths: [path.join(userDir, "node_modules")],
+    });
+    const js = buildResult.outputFiles[0].text;
+    const h = hash(js);
+    return { js, hash: h };
+  }
+
+  function getVendorBundle(libs) {
+    // Build cache key from actual installed versions
+    const keyParts = ["react@" + getInstalledVersion("react")];
+    for (const lib of libs) {
+      keyParts.push(lib.module + "@" + getInstalledVersion(getPackageName(lib.module)));
+    }
+    keyParts.sort();
+    const cacheKey = hash(JSON.stringify(keyParts));
+
+    if (vendorCache[cacheKey]) return vendorCache[cacheKey];
+
+    const bundle = buildVendorBundle(libs);
+    vendorCache[cacheKey] = bundle;
+    return bundle;
+  }
+
+  function transpile(jsx, libs) {
+    const externalList = ["react", "react-dom", "react-dom/client"];
+    if (libs) {
+      libs.forEach((lib) => {
+        if (!externalList.includes(lib.module)) {
+          externalList.push(lib.module);
+        }
+      });
+    }
+
+    // Auto-detect require() calls in JSX and add them as externals
+    const requireRe = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+    let m;
+    while ((m = requireRe.exec(jsx)) !== null) {
+      if (!externalList.includes(m[1])) {
+        externalList.push(m[1]);
+      }
+    }
+
+    const requireShim = [
+      "var require = (function() {",
+      '  var _r = {"react":window.React, "react-dom":window.ReactDOM, "react-dom/client":window.ReactDOM};',
+      "  return function(m) {",
+      "    if (_r[m]) return _r[m];",
+      "    if (window.__pkg && window.__pkg[m]) return window.__pkg[m];",
+      '    throw new Error("Module not found: " + m);',
+      "  };",
+      "})();",
+    ].join("\n");
+
     try {
       const buildResult = esbuild.buildSync({
         stdin: {
           contents: jsx,
-          resolveDir: path.join(__dirname, "../../.."),
+          resolveDir,
           loader: "jsx",
         },
         bundle: true,
@@ -107,8 +203,9 @@ module.exports = function (RED) {
         jsx: "transform",
         jsxFactory: "React.createElement",
         jsxFragment: "React.Fragment",
-        external: ["react", "react-dom"],
+        external: externalList,
         define: { "process.env.NODE_ENV": '"production"' },
+        banner: { js: requireShim },
       });
       return { js: buildResult.outputFiles[0].text, error: null };
     } catch (e) {
@@ -213,12 +310,13 @@ module.exports = function (RED) {
     const nodeId = node.id;
 
     // Config
-    const endpoint = (config.endpoint || "/portal").replace(/\/+$/, "");
+    const endpoint = (config.endpoint || "/fromcubes").replace(/\/+$/, "");
     const componentCode = config.componentCode || "";
     const pageTitle = config.pageTitle || "Portal";
     const customHead = config.customHead || "";
     const portalAuth = config.portalAuth === true;
     const showWsStatus = config.showWsStatus === true;
+    const libs = config.libs || [];
 
     // State
     const clients = new Set();
@@ -231,9 +329,40 @@ module.exports = function (RED) {
     // ── Rebuild: transpile JSX + update page state ────────────
 
     function rebuild() {
-      // Topological sort: components used by others come first
-      const entries = Object.entries(registry);
-      const names = entries.map(([n]) => n);
+      // Build or get cached vendor bundle
+      let vendorBundle;
+      try {
+        vendorBundle = getVendorBundle(libs);
+      } catch (e) {
+        node.error("Vendor bundle failed: " + e.message);
+        node.status({ fill: "red", shape: "dot", text: "vendor build error" });
+        return;
+      }
+
+      // Selective injection: only include components referenced in user code (+ transitive deps)
+      const allEntries = Object.entries(registry);
+      const needed = new Set();
+
+      function addWithDeps(name) {
+        if (needed.has(name)) return;
+        const entry = registry[name];
+        if (!entry) return;
+        needed.add(name);
+        for (const [other] of allEntries) {
+          if (other !== name && entry.code.includes(other)) {
+            addWithDeps(other);
+          }
+        }
+      }
+
+      for (const [name] of allEntries) {
+        if (componentCode.includes(name)) {
+          addWithDeps(name);
+        }
+      }
+
+      // Topological sort only needed components
+      const entries = allEntries.filter(([n]) => needed.has(n));
       entries.sort((a, b) => {
         const aUsesB = a[1].code.includes(b[0]);
         const bUsesA = b[1].code.includes(a[0]);
@@ -278,7 +407,7 @@ module.exports = function (RED) {
         "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));",
       ].join("\n");
 
-      const compiled = transpile(fullJsx);
+      const compiled = transpile(fullJsx, libs);
 
       if (compiled.error) {
         node.error("JSX transpile error: " + compiled.error);
@@ -310,6 +439,7 @@ module.exports = function (RED) {
         customHead,
         portalAuth,
         showWsStatus,
+        vendorHash: vendorBundle.hash,
       };
     }
 
@@ -351,6 +481,7 @@ module.exports = function (RED) {
                 cssHash,
                 user,
                 state.showWsStatus,
+                state.vendorHash,
               ),
             );
         });
@@ -512,7 +643,9 @@ module.exports = function (RED) {
     }); // end setImmediate
   }
 
-  RED.nodes.registerType("portal-react", PortalReactNode);
+  RED.nodes.registerType("portal-react", PortalReactNode, {
+    dynamicModuleList: "libs",
+  });
 
   // ── Serve Monaco editor files locally ────────────────────────
   const express = require("express");
@@ -548,14 +681,21 @@ module.exports = function (RED) {
     res.send(css);
   });
 
-  // ── Vendor React bundle endpoint ────────────────────────────
-  RED.httpAdmin.get("/portal-react/vendor/react.min.js", (_req, res) => {
+  // ── Vendor bundle endpoint (dynamic, hash-based) ───────────
+  RED.httpAdmin.get("/portal-react/vendor/:hash.js", (req, res) => {
+    const entry = Object.values(vendorCache).find(
+      (v) => v.hash === req.params.hash,
+    );
+    if (!entry) {
+      res.status(404).send("Not found");
+      return;
+    }
     res.set({
       "Content-Type": "application/javascript",
       "Cache-Control": "public, max-age=31536000, immutable",
-      ETag: `"${reactHash}"`,
+      ETag: `"${req.params.hash}"`,
     });
-    res.send(reactBundle);
+    res.send(entry.js);
   });
 
   // ── Admin API for component registry ──────────────────────────
@@ -582,14 +722,14 @@ module.exports = function (RED) {
 
   // ── Page builders ─────────────────────────────────────────────
 
-  function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showWsStatus) {
+  function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showWsStatus, vendorHash) {
     return `<!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width,initial-scale=1.0">
       <title>${esc(title)}</title>
-      <script src="${adminRoot}/portal-react/vendor/react.min.js?v=${reactHash}"><\/script>
+      <script src="${adminRoot}/portal-react/vendor/${vendorHash}.js"><\/script>
       ${cssHash ? `<link rel="stylesheet" href="${adminRoot}/portal-react/css/${cssHash}.css">` : ""}
       ${escScript(customHead)}
       ${showWsStatus ? `<style>
