@@ -46,7 +46,17 @@ jobs:
 
       - name: Publish
         if: steps.check.outputs.version_changed == 'true'
-        run: npm publish
+        run: |
+          VERSION=$(jq -r .version package.json)
+          if [[ "$VERSION" == *-alpha* ]]; then
+            npm publish --tag alpha
+          elif [[ "$VERSION" == *-beta* ]]; then
+            npm publish --tag beta
+          elif [[ "$VERSION" == *-rc* ]]; then
+            npm publish --tag rc
+          else
+            npm publish
+          fi
 
       - name: Create GitHub Release
         if: steps.check.outputs.version_changed == 'true'

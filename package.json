@@ -39,6 +39,14 @@
   "scripts": {
     "start": "node-red"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aaqu/fromcubes-portal-react.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Aaqu/fromcubes-portal-react/issues"
+  },
+  "homepage": "https://github.com/Aaqu/fromcubes-portal-react#readme",
   "license": "Apache-2.0",
   "author": "aaqu",
   "publishConfig": {
