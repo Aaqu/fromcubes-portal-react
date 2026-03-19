@@ -635,7 +635,7 @@
       inputs: 0,
       outputs: 0,
       icon: "font-awesome/fa-cube",
-      paletteLabel: "component",
+      paletteLabel: "fromcubes component",
       label: function () {
         return this.name || this.compName || "component";
       },
@@ -800,6 +800,34 @@
     <ul id="fc-tabs" style="min-width:600px;margin-bottom:0;"></ul>
   </div>
   <div id="fc-tabs-content">
+    <!-- ── Tab: JSX ── -->
+    <div id="fc-tab-jsx" class="fc-tab-pane">
+      <div class="form-row node-text-editor-row">
+        <div
+          id="fc-editor-wrap"
+          style="width:100%;height:420px;border:1px solid var(--red-ui-form-input-border-color,#555);border-radius:4px;overflow:hidden;position:relative;"
+        >
+          <div id="fc-monaco" style="width:100%;height:100%;"></div>
+          <textarea
+            id="fc-fallback"
+            style="display:none;width:100%;height:100%;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;background:#1e1e1e;color:#d4d4d4;border:none;padding:12px;resize:none;"
+          ></textarea>
+        </div>
+      </div>
+      <div class="form-row" style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;">
+        <button type="button" class="red-ui-button" id="fc-btn-starter">
+          <i class="fa fa-magic"></i> Default
+        </button>
+        <button type="button" class="red-ui-button" id="fc-btn-components">
+          <i class="fa fa-cube"></i> Components
+        </button>
+        <span style="flex:1"></span>
+        <button type="button" class="red-ui-button" id="fc-btn-preview">
+          <i class="fa fa-eye"></i> Preview
+        </button>
+      </div>
+    </div>
+
     <!-- ── Tab: Properties ── -->
     <div id="fc-tab-props" class="fc-tab-pane" style="display:none;">
       <div class="form-row">
@@ -845,41 +873,18 @@
           showing connection state.
         </div>
       </div>
-    </div>
-
-    <!-- ── Tab: JSX ── -->
-    <div id="fc-tab-jsx" class="fc-tab-pane">
-      <div class="form-row" style="margin-bottom:0;">
-        <div style="font-size:11px;opacity:.6;margin-bottom:4px;">
-          <code>useNodeRed()</code> &rarr;
-          <code>{ data, send, user }</code> &nbsp;|&nbsp; Components from
-          <code>fc-portal-component</code> nodes auto-imported &nbsp;|&nbsp;
-          Must export <code>&lt;App /&gt;</code> &nbsp;|&nbsp;
-          <strong>Transpiled server-side at deploy</strong>
+      <div class="form-row" style="margin-top:12px;">
+        <label style="width:auto;">
+          <input
+            type="checkbox"
+            id="node-input-portalAuth"
+            style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
+          />
+          Enable Portal Auth headers
+        </label>
+        <div style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;">
+          Read <code>X-Portal-*</code> headers from reverse proxy.
         </div>
-      </div>
-      <div class="form-row node-text-editor-row">
-        <div
-          id="fc-editor-wrap"
-          style="width:100%;height:420px;border:1px solid var(--red-ui-form-input-border-color,#555);border-radius:4px;overflow:hidden;position:relative;"
-        >
-          <div id="fc-monaco" style="width:100%;height:100%;"></div>
-          <textarea
-            id="fc-fallback"
-            style="display:none;width:100%;height:100%;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;background:#1e1e1e;color:#d4d4d4;border:none;padding:12px;resize:none;"
-          ></textarea>
-        </div>
-      </div>
-      <div class="form-row" style="display:flex;gap:8px;margin-top:4px;">
-        <button type="button" class="red-ui-button" id="fc-btn-preview">
-          <i class="fa fa-eye"></i> Preview
-        </button>
-        <button type="button" class="red-ui-button" id="fc-btn-components">
-          <i class="fa fa-cube"></i> Components
-        </button>
-        <button type="button" class="red-ui-button" id="fc-btn-starter">
-          <i class="fa fa-magic"></i> Starter
-        </button>
       </div>
     </div>
 
@@ -900,34 +905,6 @@
             style="display:none;width:100%;height:100%;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;background:#1e1e1e;color:#d4d4d4;border:none;padding:12px;resize:none;"
             placeholder='<link rel="stylesheet" href="...">'
           ></textarea>
-        </div>
-      </div>
-    </div>
-    <!-- ── Tab: Auth ── -->
-    <div id="fc-tab-auth" class="fc-tab-pane" style="display:none;">
-      <div class="form-row">
-        <label style="width:auto;">
-          <input
-            type="checkbox"
-            id="node-input-portalAuth"
-            style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
-          />
-          Enable Portal Auth headers
-        </label>
-      </div>
-      <div class="form-row" style="padding-left:4px;">
-        <div style="font-size:11px;opacity:.6;line-height:1.5;">
-          Read <code>X-Portal-*</code> headers set by Nginx proxy and expose
-          user data via <code>useNodeRed()</code>.<br /><br />
-          When enabled:<br />
-          &bull; <code>useNodeRed()</code> returns
-          <code>{ data, send, user }</code> where <code>user</code> contains
-          <code>userId</code>, <code>userName</code>, <code>username</code>,
-          <code>email</code>, <code>role</code>, <code>groups</code><br />
-          &bull; Messages from WebSocket include <code>msg._client</code> with
-          user data<br /><br />
-          Requires Nginx (or similar reverse proxy) to set
-          <code>X-Portal-*</code> headers.
         </div>
       </div>
     </div>
@@ -985,7 +962,7 @@
       inputs: 1,
       outputs: 1,
       icon: "font-awesome/fa-desktop",
-      paletteLabel: "portal react",
+      paletteLabel: "fromcubes portal",
       label: function () {
         return this.name || this.endpoint || "portal react";
       },
@@ -1027,13 +1004,13 @@
         fcTabs.addTab({ id: "fc-tab-jsx", label: "JSX" });
         fcTabs.addTab({ id: "fc-tab-props", label: "Properties" });
         fcTabs.addTab({ id: "fc-tab-head", label: "Head HTML" });
-        fcTabs.addTab({ id: "fc-tab-auth", label: "Auth" });
         fcTabs.activateTab("fc-tab-jsx");
 
         // URL hint
         function updateHint() {
           var ep = $("#node-input-endpoint").val() || "/fromcubes";
-          $("#fc-url-hint").text("Page served at: http://<host>:1880" + ep);
+          var root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
+          $("#fc-url-hint").text("Page served at: http://<host>:1880" + root + ep);
         }
         $("#node-input-endpoint").on("input", updateHint);
         updateHint();
@@ -1145,66 +1122,142 @@
 
         // Buttons
         $("#fc-btn-starter").on("click", function () {
-          if (editorInstance) editorInstance.setValue(STARTER);
-          else $("#fc-fallback").val(STARTER);
+          $("<div>Replace current JSX with default starter code?</div>").dialog({
+            title: "Load Default",
+            modal: true,
+            width: 360,
+            buttons: [
+              { text: "Cancel", click: function () { $(this).dialog("close"); } },
+              { text: "Replace", class: "primary", click: function () {
+                if (editorInstance) editorInstance.setValue(STARTER);
+                else $("#fc-fallback").val(STARTER);
+                $(this).dialog("close");
+              }},
+            ],
+            close: function () { $(this).remove(); },
+          });
         });
 
         $("#fc-btn-preview").on("click", function () {
           var ep = $("#node-input-endpoint").val();
-          if (ep) window.open(ep, "_blank");
+          var root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
+          if (ep) window.open(root + ep, "_blank");
         });
 
         $("#fc-btn-components").on("click", function () {
           $.getJSON("portal-react/registry", function (reg) {
-            var names = Object.keys(reg);
+            var names = Object.keys(reg).sort();
             if (!names.length) {
               RED.notify("No component nodes on canvas.", "warning");
               return;
             }
-            var html = "<p>Click to insert:</p>";
+
+            function extractProps(code) {
+              if (!code) return [];
+              var m = code.match(/function\s+\w+\s*\(\s*\{([^}]*)\}/);
+              if (!m) return [];
+              return m[1].split(",").map(function (s) { return s.trim().split(/\s*=\s*/)[0]; }).filter(Boolean);
+            }
+
+            var html =
+              '<div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">' +
+              '<input type="text" id="fc-comp-search" placeholder="Search..." ' +
+              'style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;border:1px solid rgba(128,128,128,.4);border-radius:3px;' +
+              'background:var(--red-ui-form-input-background-color,#fff);color:var(--red-ui-form-text-color,#333);font-size:12px;flex-shrink:0;" />' +
+              '<div id="fc-comp-list" style="flex:1;overflow-y:auto;">';
+
             names.forEach(function (n) {
               var c = reg[n];
+              var props = extractProps(c.code);
+              var detailParts = [];
+              if (props.length) {
+                detailParts.push('<div style="margin:4px 0 0 0;font-size:11px;opacity:.6;">' +
+                  props.map(function (p) {
+                    return '<code style="background:rgba(128,128,128,.15);padding:0 4px;border-radius:2px;margin-right:3px;">' + p + '</code>';
+                  }).join("") + '</div>');
+              }
+              var io = [];
+              if ((c.inputs || []).length) io.push("in: " + c.inputs.join(", "));
+              if ((c.outputs || []).length) io.push("out: " + c.outputs.join(", "));
+              if (io.length) {
+                detailParts.push('<div style="font-size:10px;opacity:.4;margin-top:2px;">' + io.join(" &bull; ") + '</div>');
+              }
+              var hasDetail = detailParts.length > 0;
+
               html +=
-                '<div style="padding:4px 0;border-bottom:1px solid rgba(128,128,128,.2)">' +
-                '<button class="red-ui-button fc-lib-ins" data-name="' +
-                n +
-                '">' +
-                n +
-                "</button>" +
-                ' <span style="opacity:.5;font-size:11px">in:[' +
-                (c.inputs || []).join(",") +
-                "] out:[" +
-                (c.outputs || []).join(",") +
-                "]</span></div>";
+                '<div class="fc-comp-item" data-name="' + n + '" data-search="' + n.toLowerCase() + '" ' +
+                'style="border-bottom:1px solid rgba(128,128,128,.1);">' +
+                '<div style="display:flex;align-items:center;padding:4px 6px;cursor:pointer;" class="fc-comp-row">' +
+                (hasDetail ? '<i class="fa fa-caret-right fc-comp-arrow" style="width:14px;opacity:.4;font-size:12px;transition:transform .15s;"></i>' : '<span style="width:14px;"></span>') +
+                '<span class="fc-comp-name" data-name="' + n + '" style="font-weight:600;font-size:12px;flex:1;">' + n + '</span>' +
+                '</div>' +
+                (hasDetail ? '<div class="fc-comp-detail" style="display:none;padding:0 6px 4px 20px;">' + detailParts.join("") + '</div>' : '') +
+                '</div>';
             });
-            $("<div></div>")
-              .html(html)
-              .dialog({
-                title: "Available Components",
-                modal: true,
-                width: 400,
-                buttons: [
-                  {
-                    text: "Close",
-                    click: function () {
-                      $(this).dialog("close");
-                    },
-                  },
-                ],
-                close: function () {
-                  $(this).remove();
-                },
+            html += '</div></div>';
+
+            var $dlg = $("<div></div>").html(html).dialog({
+              title: "Components",
+              modal: true,
+              width: 380,
+              buttons: [
+                { text: "Close", click: function () { $(this).dialog("close"); } },
+              ],
+              close: function () { $(this).remove(); },
+            });
+
+            // Search
+            $dlg.find("#fc-comp-search").on("input", function () {
+              var q = $(this).val().toLowerCase();
+              $dlg.find(".fc-comp-item").each(function () {
+                $(this).toggle($(this).data("search").indexOf(q) !== -1);
               });
-            $(document).on("click", ".fc-lib-ins", function () {
-              var tag = "<" + $(this).data("name") + " />";
+            }).focus();
+
+            // Hover
+            $dlg.on("mouseenter", ".fc-comp-row", function () {
+              $(this).css("background", "rgba(128,128,128,.1)");
+            }).on("mouseleave", ".fc-comp-row", function () {
+              $(this).css("background", "");
+            });
+
+            // Arrow toggle detail
+            $dlg.on("click", ".fc-comp-arrow", function (e) {
+              e.stopPropagation();
+              var $item = $(this).closest(".fc-comp-item");
+              var $detail = $item.find(".fc-comp-detail");
+              var open = $detail.is(":visible");
+              $detail.slideToggle(100);
+              $(this).css("transform", open ? "" : "rotate(90deg)");
+            });
+
+            // Click name: delete selection, insert <Tag></Tag> in one line, cursor between tags
+            $dlg.on("click", ".fc-comp-name", function () {
+              var name = $(this).data("name");
+              var openTag = "<" + name + ">";
+              var closeTag = "</" + name + ">";
+              var text = openTag + closeTag;
+              $dlg.dialog("close");
               if (editorInstance) {
-                editorInstance.trigger("keyboard", "type", { text: tag });
-                editorInstance.focus();
+                var sel = editorInstance.getSelection();
+                var startLine = sel.startLineNumber;
+                var startCol = sel.startColumn;
+                editorInstance.executeEdits("fc-components", [{
+                  range: sel,
+                  text: text,
+                }]);
+                setTimeout(function () {
+                  editorInstance.setPosition({ lineNumber: startLine, column: startCol + openTag.length });
+                  editorInstance.focus();
+                }, 50);
               } else {
                 var ta = $("#fc-fallback")[0];
-                var p = ta.selectionStart,
-                  v = ta.value;
-                ta.value = v.slice(0, p) + tag + v.slice(p);
+                var s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+                ta.value = v.slice(0, s) + text + v.slice(e);
+                setTimeout(function () {
+                  ta.selectionStart = ta.selectionEnd = s + openTag.length;
+                  ta.focus();
+                }, 50);
               }
             });
           });
@@ -1292,15 +1345,20 @@
      Help
      ============================================================ -->
 <script type="text/html" data-help-name="portal-react">
+  <h3>Quick Reference</h3>
+  <ul>
+    <li><code>useNodeRed()</code> &rarr; <code>{ data, send, user }</code></li>
+    <li>Components from <code>fc-portal-component</code> nodes are auto-imported</li>
+    <li>Must export <code>&lt;App /&gt;</code></li>
+    <li>JSX is transpiled server-side at deploy</li>
+  </ul>
+
   <p>
-    Renders a React application on a configurable HTTP endpoint with live
-    WebSocket data binding.
-  </p>
-  <h3>Key difference from Dashboard 2.0</h3>
-  <p>
-    JSX is transpiled <strong>server-side at deploy time</strong> using Sucrase.
-    The browser receives plain JS — no Babel, no runtime compilation. Page
-    weight: ~45 KB (React production).
+    Renders a React 19 application on a configurable HTTP endpoint with live
+    WebSocket data binding. JSX is transpiled <strong>server-side at deploy
+    time</strong> using esbuild — browsers receive pre-compiled JS with zero
+    runtime compilation. Tailwind CSS 4 utility classes are generated
+    server-side and served as static CSS.
   </p>
 
   <h3>Inputs</h3>
@@ -1308,21 +1366,36 @@
     <code>msg.payload</code> is pushed to all connected clients via WebSocket.
   </p>
   <pre>
-const { data, send } = useNodeRed();
-// data = last msg.payload</pre
+const { data, send, user } = useNodeRed();
+// data = last msg.payload (reactive)
+// send(payload, topic?) — emit msg on output wire
+// user = portal auth data or null</pre
   >
 
   <h3>Outputs</h3>
   <p>
     <code>send(payload, topic?)</code> emits a <code>msg</code> on the node's
-    output wire.
+    output wire via WebSocket.
+  </p>
+
+  <h3>npm Packages</h3>
+  <p>
+    Add npm packages in the <strong>Modules</strong> list (e.g.
+    <code>chart.js/auto@^4.4.0</code>, <code>d3</code>, <code>three</code>).
+    Node-RED auto-installs them at deploy time. All packages are bundled with
+    React into a single vendor IIFE via esbuild, cached by hash of installed
+    versions. Use them in JSX via standard imports.
   </p>
 
   <h3>Deploy behavior</h3>
   <ul>
     <li>
-      Each deploy re-transpiles JSX (cached by content hash — unchanged code is
-      instant)
+      Each deploy re-transpiles JSX via esbuild and rebuilds Tailwind CSS
+      (both cached by content hash — unchanged code is instant)
+    </li>
+    <li>
+      Vendor bundle (React + npm packages) rebuilt only when package versions
+      change
     </li>
     <li>
       Active WebSocket clients receive close code 1001 and auto-reconnect
@@ -1340,7 +1413,7 @@ const { data, send } = useNodeRed();
   <p>
     Components defined in <strong>fc-portal-component</strong> nodes on the
     canvas are auto-injected into every portal-react page. Use them as JSX tags
-    by their component name.
+    by their component name — no imports needed.
   </p>
 
   <h3>Portal Auth</h3>
@@ -1361,6 +1434,13 @@ const { data, send } = useNodeRed();
     <code>&lt;head&gt;</code>. Example:
   </p>
   <pre>
-&lt;link href="https://fonts.googleapis.com/css2?family=Inter&display=swap" rel="stylesheet"&gt;</pre
+&lt;link href="https://fonts.googleapis.com/css2?family=Inter&amp;display=swap" rel="stylesheet"&gt;</pre
   >
+
+  <h3>WebSocket Status</h3>
+  <p>
+    Optional <em>fromcubes</em> badge in the bottom-right corner showing
+    connection state. Enable via the <strong>Show WebSocket status
+    indicator</strong> checkbox (off by default).
+  </p>
 </script>
