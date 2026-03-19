@@ -124,7 +124,7 @@ module.exports = function (RED) {
       lines.push("if(!window.__pkg) window.__pkg = {};");
       libs.forEach((lib, i) => {
         lines.push(`import * as __p${i} from ${JSON.stringify(lib.module)};`);
-        lines.push(`window.__pkg[${JSON.stringify(lib.module)}] = __p${i};`);
+        lines.push(`window.__pkg[${JSON.stringify(lib.module)}] = __p${i}.default || __p${i};`);
       });
     }
     const contents = lines.join("\n");
@@ -136,6 +136,7 @@ module.exports = function (RED) {
       write: false,
       target: ["es2020"],
       define: { "process.env.NODE_ENV": '"production"' },
+      logOverride: { "import-is-undefined": "silent" },
       nodePaths: [path.join(userDir, "node_modules")],
     });
     const js = buildResult.outputFiles[0].text;
