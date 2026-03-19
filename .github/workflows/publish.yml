@@ -46,16 +46,18 @@ jobs:
 
       - name: Publish
         if: steps.check.outputs.version_changed == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION=$(jq -r .version package.json)
           if [[ "$VERSION" == *-alpha* ]]; then
-            npm publish --tag alpha
+            npm publish --tag alpha --provenance
           elif [[ "$VERSION" == *-beta* ]]; then
-            npm publish --tag beta
+            npm publish --tag beta --provenance
           elif [[ "$VERSION" == *-rc* ]]; then
-            npm publish --tag rc
+            npm publish --tag rc --provenance
           else
-            npm publish
+            npm publish --provenance
           fi
 
       - name: Create GitHub Release
