@@ -68,10 +68,10 @@ Dependencies install automatically. No build step needed.
 | Head HTML | Extra `<head>` tags (CDN, fonts, CSS)                            |
 | Code Editor | Monaco with JSX — must define `<App />`                          |
 
-### fc-component-library (config node)
+### fc-portal-component (config node)
 
 Shared component store. Each component has name, code, input/output field definitions.
-Components are auto-injected into every portal-react page at transpile time.
+Referenced components (with transitive dependencies) are selectively injected at transpile time.
 
 ## Editor features
 

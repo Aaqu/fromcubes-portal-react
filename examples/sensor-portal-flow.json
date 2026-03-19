@@ -43,6 +43,32 @@
     "wires": []
   },
   {
+    "id": "fc-button-comp",
+    "type": "fc-portal-component",
+    "z": "fc-demo-flow",
+    "name": "Button",
+    "compName": "Button",
+    "compCode": "function Button({ onClick, children, variant = 'primary', className = '' }) {\n  const base = 'px-4 py-2 rounded-lg font-medium transition-colors';\n  const variants = {\n    primary: 'bg-blue-600 text-white hover:bg-blue-500',\n    secondary: 'bg-zinc-700 text-zinc-200 hover:bg-zinc-600',\n    danger: 'bg-red-600 text-white hover:bg-red-500'\n  };\n  return (\n    <button\n      className={`${base} ${variants[variant] || variants.primary} ${className}`}\n      onClick={onClick}\n    >{children}</button>\n  );\n}",
+    "compInputs": "onClick,children,variant,className",
+    "compOutputs": "",
+    "x": 160,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "fc-valuebadge-comp",
+    "type": "fc-portal-component",
+    "z": "fc-demo-flow",
+    "name": "ValueBadge",
+    "compName": "ValueBadge",
+    "compCode": "function ValueBadge({ label, value, className = '' }) {\n  if (value == null) return null;\n  return (\n    <span className={`text-zinc-600 text-xs ${className}`}>\n      {label && <>{label}: </>}{value}\n    </span>\n  );\n}",
+    "compInputs": "label,value,className",
+    "compOutputs": "",
+    "x": 160,
+    "y": 400,
+    "wires": []
+  },
+  {
     "id": "fc-portal",
     "type": "portal-react",
     "z": "fc-demo-flow",
@@ -52,7 +78,7 @@
     "customHead": "",
     "inputSchema": "[{\"name\":\"temp\",\"type\":\"number\"},{\"name\":\"humidity\",\"type\":\"number\"},{\"name\":\"pressure\",\"type\":\"number\"},{\"name\":\"ts\",\"type\":\"number\"}]",
     "outputSchema": "[{\"name\":\"action\",\"type\":\"string\"}]",
-    "componentCode": "function App() {\n  const { data, send } = useNodeRed();\n  const s = data || { temp: 0, humidity: 0, pressure: 0 };\n\n  return (\n    <div className=\"min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-8\">\n      <h1 className=\"text-2xl font-light text-cyan-400 mb-10\">Sensor Portal</h1>\n      <div className=\"flex gap-10 flex-wrap justify-center\">\n        <Gauge value={s.temp} min={-10} max={50} label=\"Temperature\" unit=\"°C\" />\n        <Gauge value={s.humidity} min={0} max={100} label=\"Humidity\" unit=\"%\" />\n        <Gauge value={s.pressure} min={950} max={1050} label=\"Pressure\" unit=\"hPa\" />\n      </div>\n      <div className=\"mt-10 flex gap-3 items-center\">\n        <button\n          className=\"px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 transition-colors\"\n          onClick={() => send({ action: 'refresh' })}\n        >Refresh</button>\n        {s.ts && <span className=\"text-zinc-600 text-xs\">Last: {new Date(s.ts).toLocaleTimeString()}</span>}\n      </div>\n    </div>\n  );\n}",
+    "componentCode": "function App() {\n  const { data, send } = useNodeRed();\n  const s = data || { temp: 0, humidity: 0, pressure: 0 };\n\n  return (\n    <div className=\"min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-8\">\n      <h1 className=\"text-2xl font-light text-cyan-400 mb-10\">Sensor Portal</h1>\n      <div className=\"flex gap-10 flex-wrap justify-center\">\n        <Gauge value={s.temp} min={-10} max={50} label=\"Temperature\" unit=\"°C\" />\n        <Gauge value={s.humidity} min={0} max={100} label=\"Humidity\" unit=\"%\" />\n        <Gauge value={s.pressure} min={950} max={1050} label=\"Pressure\" unit=\"hPa\" />\n      </div>\n      <div className=\"mt-10 flex gap-3 items-center\">\n        <Button onClick={() => send({ action: 'refresh' })}>Refresh</Button>\n        <ValueBadge label=\"Last\" value={s.ts ? new Date(s.ts).toLocaleTimeString() : null} />\n      </div>\n    </div>\n  );\n}",
     "x": 560,
     "y": 160,
     "wires": [["fc-debug"]]
