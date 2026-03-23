@@ -12,26 +12,24 @@ React portal node for Node-RED. Server-side JSX transpilation via esbuild. Tailw
 ┌─ Deploy time (Node-RED server) ───────────────────────────┐
 │                                                           │
 │  npm packages  ──►  auto-installed at deploy              │
-│       (d3, three, chart.js…)  via dynamicModuleList       │
+│       (d3, three, @react-three/fiber…)                    │
+│       via dynamicModuleList                               │
 │                                                           │
-│  React + packages  ──►  esbuild bundle  ──►  vendor.js    │
-│       single IIFE, one React instance                     │
-│       cached by hash(names + versions)                    │
-│                                                           │
-│  JSX (editor)  ──►  esbuild transpile  ──►  cached JS     │
-│       packages marked external → require() shim           │
+│  React + packages + JSX  ──►  single esbuild pass         │
+│       one IIFE, one React instance (alias)                │
+│       tree-shaking removes unused exports                 │
+│       React peer deps share same instance                 │
 │                                                           │
 │  Tailwind classes  ──►  server-side compile  ──►  CSS     │
-│       hash-keyed cache                                    │
+│       stored per-page in pageState                        │
 │                                                           │
-│  Unchanged code on redeploy = cache hit, 0ms              │
-│  Changed code = retranspile, ~5ms                         │
+│  Unchanged JSX on redeploy = reuse CSS, 0ms               │
+│  Changed JSX = retranspile, ~5ms                          │
 └───────────────────────────────────────────────────────────┘
 
 ┌─ Runtime (browser) ───────────────────────────────────────┐
 │                                                           │
-│  GET /endpoint  ──►  HTML + pre-compiled JS               │
-│                      vendor bundle (React + packages)     │
+│  GET /endpoint  ──►  HTML + single inlined JS bundle      │
 │                      Tailwind CSS (server-compiled)       │
 │                      NO Babel, NO Sucrase, NO compiler    │
 │                                                           │
@@ -63,7 +61,7 @@ Dependencies install automatically. No build step needed.
 |---|------------------------------------------------------------------|
 | Endpoint | HTTP path, e.g. `/fromcubes/page1`                               |
 | Page Title | Browser tab title                                                |
-| npm Packages | Comma-separated packages, e.g. `d3, three, chart.js/auto@^4.4.0` |
+| npm Packages | Comma-separated packages, e.g. `d3, three, @react-three/fiber` |
 | Portal Auth | Enable portal user header extraction                             |
 | Head HTML | Extra `<head>` tags (CDN, fonts, CSS)                            |
 | Code Editor | Monaco with JSX — must define `<App />`                          |
@@ -85,10 +83,11 @@ Referenced components (with transitive dependencies) are selectively injected at
 
 ```jsx
 function App() {
-  const { data, send, user } = useNodeRed();
-  // data  = last msg.payload from input wire (reactive)
+  const { data, send, user, portalClient } = useNodeRed();
+  // data         = last msg.payload from input wire (reactive)
   // send(payload, topic?) = emit msg on output wire
-  // user  = portal user object (when Portal Auth enabled), or null
+  // user         = portal user object (when Portal Auth enabled), or null
+  // portalClient = unique session/tab ID (assigned by server on WS connect)
   return <div className="p-4 text-lg">{JSON.stringify(data)}</div>;
 }
 ```
@@ -107,7 +106,10 @@ When **Portal Auth** is checked, the node extracts user identity from incoming r
 | `x-portal-user-groups` | `groups` (JSON array) |
 
 - In the browser, `useNodeRed().user` returns the extracted user object (or `null` if auth is disabled or no headers present).
-- On outgoing messages, user info is attached as `msg._client` so downstream nodes can identify the sender.
+- Every WebSocket message includes `msg._client = { portalClient, ...userFields }`. The `portalClient` is always present (unique per tab/session); user fields are added when Portal Auth is enabled.
+- To send a response to a specific tab, keep `msg._client` on the return message (or set `msg._client = { portalClient: "..." }`).
+- To send to all sessions of a user, set `msg._client = { userId: "..." }` (omit `portalClient`).
+- To broadcast to all clients, remove `msg._client` from the message.
 
 ## Deploy lifecycle
 
@@ -138,21 +140,27 @@ Transpile errors:
 
 | Asset | Size (gzip) |
 |---|---|
-| Vendor bundle (React + packages) | ~45 KB React only, grows with packages |
-| Your transpiled JS | ~1-5 KB |
-| Tailwind CSS (server-compiled) | cached per content hash |
+| Single JS bundle (React + packages + your code) | ~45 KB React only, grows with packages |
+| Tailwind CSS (server-compiled) | stored per-page, reused if JSX unchanged |
 | WebSocket bridge | <1 KB |
 
-No Babel, no Sucrase client, no Vue, no Vuetify, no Socket.IO.
+Single-pass esbuild bundle — React, npm packages, and your JSX compiled into one IIFE. Tree-shaking removes unused exports. React `alias` ensures packages with React peer deps (e.g. `@react-three/fiber`, `@pixi/react`) share the same React instance — no duplicate React, no hooks errors.
+
+No Babel, no Sucrase, no runtime compiler in the browser.
 
 ## Examples
 
+Import `001-shared-components-flow.json` first — it provides shared UI components (Page, Header, Stat, Button, ValueBadge) used by all examples.
+
 | Flow | npm packages | Description |
 |---|---|---|
-| `sensor-portal-flow.json` | — | Basic sensor gauge with live WebSocket data |
-| `chart-portal-flow.json` | `chart.js/auto` | Live updating Chart.js chart |
-| `d3-poland-flow.json` | `d3` | Interactive SVG map of Poland (simulated data) |
-| `threejs-portal-flow.json` | `three` | 3D scene with Three.js |
+| `001-shared-components-flow.json` | — | Shared components: Page, Header, Stat, Button, ValueBadge |
+| `002-sensor-portal-flow.json` | — | Sensor gauge with live WebSocket data |
+| `003-chart-portal-flow.json` | `chart.js/auto` | Live updating Chart.js charts |
+| `004-d3-poland-flow.json` | `d3` | Interactive SVG map of Poland (simulated data) |
+| `005-threejs-portal-flow.json` | `three` | 3D scene with Three.js |
+| `006-pixi-portal-flow.json` | `pixi.js`, `@pixi/react` | Drag & drop shapes with PixiJS |
+| `007-webgpu-tsl-flow.json` | `three` | WebGPU renderer + TSL animated shaders |
 
 ## License
 

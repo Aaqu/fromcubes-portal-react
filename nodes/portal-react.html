@@ -56,7 +56,7 @@
       var libContent = [
         "declare var React: any;",
         "declare var ReactDOM: any;",
-        "declare function useNodeRed(): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null };",
+        "declare function useNodeRed(): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null };",
       ].join("\n");
       console.log(PREFIX, "addExtraLib globals.d.ts");
       jsDef.addExtraLib(libContent, "file:///globals.d.ts");
@@ -920,7 +920,7 @@
     var headEditorInstance = null;
 
     var STARTER = [
-      "// useNodeRed() \u2192 { data, send }",
+      "// useNodeRed() \u2192 { data, send, portalClient }",
       "//   data  = last msg.payload from input wire",
       "//   send(payload, topic?) = push msg to output wire",
       "// Components from fc-portal-component nodes are available by name.",
@@ -1347,7 +1347,7 @@
 <script type="text/html" data-help-name="portal-react">
   <h3>Quick Reference</h3>
   <ul>
-    <li><code>useNodeRed()</code> &rarr; <code>{ data, send, user }</code></li>
+    <li><code>useNodeRed()</code> &rarr; <code>{ data, send, user, portalClient }</code></li>
     <li>Components from <code>fc-portal-component</code> nodes are auto-imported</li>
     <li>Must export <code>&lt;App /&gt;</code></li>
     <li>JSX is transpiled server-side at deploy</li>
@@ -1363,13 +1363,15 @@
 
   <h3>Inputs</h3>
   <p>
-    <code>msg.payload</code> is pushed to all connected clients via WebSocket.
+    <code>msg.payload</code> is pushed via WebSocket. Set <code>msg._client</code>
+    to target specific clients, or omit it to broadcast to all.
   </p>
   <pre>
-const { data, send, user } = useNodeRed();
-// data = last msg.payload (reactive)
+const { data, send, user, portalClient } = useNodeRed();
+// data         = last msg.payload (reactive)
 // send(payload, topic?) — emit msg on output wire
-// user = portal auth data or null</pre
+// user         = portal auth data or null
+// portalClient = unique session/tab ID (assigned by server)</pre
   >
 
   <h3>Outputs</h3>
@@ -1422,9 +1424,21 @@ const { data, send, user } = useNodeRed();
     a reverse proxy (e.g. Nginx) and exposes user data:
   </p>
   <ul>
-    <li><code>useNodeRed()</code> returns <code>{ data, send, user }</code></li>
+    <li><code>useNodeRed()</code> returns <code>{ data, send, user, portalClient }</code></li>
     <li>
-      Messages from WebSocket include <code>msg._client</code> with user info
+      All WebSocket messages include <code>msg._client</code> with
+      <code>{ portalClient, ...userFields }</code>
+    </li>
+    <li>
+      To target a specific tab: keep <code>msg._client</code> (or set
+      <code>msg._client = { portalClient: "..." }</code>)
+    </li>
+    <li>
+      To target all tabs of a user: set
+      <code>msg._client = { userId: "..." }</code> (no portalClient)
+    </li>
+    <li>
+      To broadcast to all: remove <code>msg._client</code>
     </li>
   </ul>
 

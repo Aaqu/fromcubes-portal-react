@@ -1,0 +1,110 @@
+[
+  {
+    "id": "fc-pixi-flow",
+    "type": "tab",
+    "label": "PixiJS Demo",
+    "disabled": false
+  },
+  {
+    "id": "fc-pixi-comp-drawshape",
+    "type": "fc-portal-component",
+    "z": "fc-pixi-flow",
+    "compName": "DrawShape",
+    "compCode": "function DrawShape({ color, size, type }) {\n  const draw = useCallback((g) => {\n    g.clear();\n    if (type === 'circle') {\n      g.circle(0, 0, size / 2);\n    } else if (type === 'triangle') {\n      const h = size * 0.866;\n      g.moveTo(0, -h / 2);\n      g.lineTo(size / 2, h / 2);\n      g.lineTo(-size / 2, h / 2);\n      g.closePath();\n    } else {\n      g.roundRect(-size / 2, -size / 2, size, size, 4);\n    }\n    g.fill(color);\n  }, [color, size, type]);\n  return <graphics draw={draw} />;\n}",
+    "compInputs": "color,size,type",
+    "compOutputs": "",
+    "x": 160,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-pixi-comp-draggable",
+    "type": "fc-portal-component",
+    "z": "fc-pixi-flow",
+    "compName": "DraggableShape",
+    "compCode": "import { useTick } from '@pixi/react';\n\nfunction DraggableShape({ id, x, y, color, size, type, speed, onDrop }) {\n  const ref = useRef(null);\n  const drag = useRef(false);\n  const off = useRef({ x: 0, y: 0 });\n  const spd = useRef(speed);\n  useEffect(() => { spd.current = speed; }, [speed]);\n\n  useTick((t) => {\n    if (ref.current && !drag.current) {\n      ref.current.rotation += 0.02 * spd.current * t.deltaTime;\n    }\n  });\n\n  useEffect(() => {\n    const c = ref.current;\n    if (!c) return;\n    c.eventMode = 'static';\n    c.cursor = 'grab';\n\n    const down = (e) => {\n      drag.current = true;\n      c.cursor = 'grabbing';\n      c.alpha = 0.75;\n      c.scale.set(1.1);\n      const p = e.global;\n      off.current = { x: p.x - c.x, y: p.y - c.y };\n    };\n    const move = (e) => {\n      if (!drag.current) return;\n      const p = e.global;\n      c.x = p.x - off.current.x;\n      c.y = p.y - off.current.y;\n    };\n    const up = () => {\n      if (!drag.current) return;\n      drag.current = false;\n      c.cursor = 'grab';\n      c.alpha = 1;\n      c.scale.set(1);\n      onDrop({ id, x: c.x, y: c.y, type, color });\n    };\n\n    c.on('pointerdown', down);\n    c.on('globalpointermove', move);\n    c.on('pointerup', up);\n    c.on('pointerupoutside', up);\n    return () => {\n      c.off('pointerdown', down);\n      c.off('globalpointermove', move);\n      c.off('pointerup', up);\n      c.off('pointerupoutside', up);\n    };\n  }, [id, type, color, onDrop]);\n\n  return (\n    <container ref={ref} x={x} y={y}>\n      <DrawShape color={color} size={size} type={type} />\n    </container>\n  );\n}",
+    "compInputs": "id,x,y,color,size,type,speed,onDrop",
+    "compOutputs": "",
+    "x": 360,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-pixi-comp-dropzone",
+    "type": "fc-portal-component",
+    "z": "fc-pixi-flow",
+    "compName": "DropZone",
+    "compCode": "const ZONE = { x: 650, y: 250, w: 220, h: 420 };\n\nfunction DropZone() {\n  const draw = useCallback((g) => {\n    g.clear();\n    g.setStrokeStyle({ width: 2, color: 0x3f3f46, alpha: 0.6 });\n    g.roundRect(-ZONE.w / 2, -ZONE.h / 2, ZONE.w, ZONE.h, 16);\n    g.stroke();\n    g.setStrokeStyle({ width: 1, color: 0x22d3ee, alpha: 0.15 });\n    g.roundRect(-ZONE.w / 2 + 6, -ZONE.h / 2 + 6, ZONE.w - 12, ZONE.h - 12, 12);\n    g.stroke();\n  }, []);\n\n  return (\n    <container x={ZONE.x} y={ZONE.y}>\n      <graphics draw={draw} />\n    </container>\n  );\n}",
+    "compInputs": "",
+    "compOutputs": "",
+    "x": 560,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-pixi-comp-statusbar",
+    "type": "fc-portal-component",
+    "z": "fc-pixi-flow",
+    "compName": "StatusBar",
+    "compCode": "function StatusBar({ count, dropCount, colorHex, size, speed }) {\n  return (\n    <div className=\"px-6 py-4 bg-zinc-900/50 border-t border-zinc-800/50 flex items-center gap-6 flex-wrap\">\n      <Stat label=\"On canvas\">\n        <span className=\"text-sm font-mono text-cyan-400\">{count}</span>\n      </Stat>\n      <Stat label=\"Dropped\">\n        <span className=\"text-sm font-mono text-emerald-400\">{dropCount}</span>\n      </Stat>\n      <Stat label=\"Last color\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{backgroundColor: colorHex}} />\n      </Stat>\n      <Stat label=\"Size\">\n        <span className=\"text-sm font-mono text-cyan-400\">{size || '\\u2014'}px</span>\n      </Stat>\n      <Stat label=\"Speed\">\n        <span className=\"text-sm font-mono text-cyan-400\">{speed || '\\u2014'}x</span>\n      </Stat>\n    </div>\n  );\n}",
+    "compInputs": "count,dropCount,colorHex,size,speed",
+    "compOutputs": "",
+    "x": 160,
+    "y": 380,
+    "wires": []
+  },
+  {
+    "id": "fc-pixi-inject",
+    "type": "inject",
+    "z": "fc-pixi-flow",
+    "name": "Tick",
+    "props": [{ "p": "payload" }],
+    "repeat": "3",
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 160,
+    "wires": [["fc-pixi-func"]]
+  },
+  {
+    "id": "fc-pixi-func",
+    "type": "function",
+    "z": "fc-pixi-flow",
+    "name": "Random shape",
+    "func": "const colors = [0x22d3ee, 0xa78bfa, 0x34d399, 0xfbbf24, 0xf87171, 0x60a5fa];\nconst types = ['rect', 'circle', 'triangle'];\nmsg.payload = {\n  color: colors[Math.floor(Math.random() * colors.length)],\n  size: Math.floor(40 + Math.random() * 60),\n  speed: +(0.5 + Math.random() * 2).toFixed(2),\n  type: types[Math.floor(Math.random() * types.length)]\n};\nreturn msg;",
+    "outputs": 1,
+    "x": 360,
+    "y": 160,
+    "wires": [["fc-pixi-portal"]]
+  },
+  {
+    "id": "fc-pixi-portal",
+    "type": "portal-react",
+    "z": "fc-pixi-flow",
+    "name": "Pixi Portal",
+    "endpoint": "/fromcubes/pixi",
+    "pageTitle": "fromcubes Pixi",
+    "customHead": "",
+    "portalAuth": false,
+    "showWsStatus": false,
+    "libs": [
+      { "module": "pixi.js", "var": "PIXI" },
+      { "module": "@pixi/react", "var": "PixiReact" }
+    ],
+    "componentCode": "import { Container, Graphics } from 'pixi.js';\nimport { Application, extend } from '@pixi/react';\nextend({ Container, Graphics });\n\nconst ZONE = { x: 650, y: 250, w: 220, h: 420 };\nconst TYPES = ['rect', 'circle', 'triangle'];\n\nfunction App() {\n  const { data, send } = useNodeRed();\n  const [shapes, setShapes] = useState([]);\n  const [dropCount, setDropCount] = useState(0);\n  const idRef = useRef(0);\n\n  useEffect(() => {\n    if (!data) return;\n    const type = data.type || TYPES[Math.floor(Math.random() * TYPES.length)];\n    setShapes(prev => {\n      const next = [...prev, {\n        id: idRef.current++,\n        x: 60 + Math.random() * 300,\n        y: 60 + Math.random() * 380,\n        color: data.color || 0x22d3ee,\n        size: data.size || 60,\n        speed: data.speed || 1,\n        type\n      }];\n      return next.length > 15 ? next.slice(-15) : next;\n    });\n  }, [data]);\n\n  const handleDrop = useCallback((info) => {\n    const inZone = info.x > ZONE.x - ZONE.w / 2 && info.x < ZONE.x + ZONE.w / 2 &&\n                   info.y > ZONE.y - ZONE.h / 2 && info.y < ZONE.y + ZONE.h / 2;\n    if (inZone) {\n      setShapes(prev => prev.filter(s => s.id !== info.id));\n      setDropCount(c => c + 1);\n      send({ action: 'dropped', shape: info.type, color: info.color, x: Math.round(info.x), y: Math.round(info.y) }, 'pixi/drop');\n    }\n  }, [send]);\n\n  const colorHex = data ? '#' + (data.color || 0).toString(16).padStart(6, '0') : '#22d3ee';\n\n  return (\n    <Page>\n      <Header title=\"fromcubes Pixi\" subtitle=\"drag shapes into the drop zone\" />\n      <div className=\"flex-1 flex items-center justify-center p-6\">\n        <div className=\"rounded-xl overflow-hidden border border-zinc-800\">\n          <Application width={800} height={500} background={0x18181b} antialias>\n            <DropZone />\n            {shapes.map(s => (\n              <DraggableShape key={s.id} {...s} onDrop={handleDrop} />\n            ))}\n          </Application>\n        </div>\n      </div>\n      <StatusBar count={shapes.length} dropCount={dropCount} colorHex={colorHex} size={data?.size} speed={data?.speed} />\n    </Page>\n  );\n}",
+    "x": 560,
+    "y": 160,
+    "wires": [["fc-pixi-debug"]]
+  },
+  {
+    "id": "fc-pixi-debug",
+    "type": "debug",
+    "z": "fc-pixi-flow",
+    "name": "Pixi output",
+    "active": true,
+    "tosidebar": true,
+    "x": 750,
+    "y": 160,
+    "wires": []
+  }
+]

@@ -1,0 +1,85 @@
+[
+  {
+    "id": "fc-webgpu-flow",
+    "type": "tab",
+    "label": "WebGPU TSL Demo",
+    "disabled": false
+  },
+  {
+    "id": "fc-webgpu-comp-canvas",
+    "type": "fc-portal-component",
+    "z": "fc-webgpu-flow",
+    "compName": "TSLCanvas",
+    "compCode": "import * as THREE from 'three/webgpu';\nimport { uniform, sin, cos, time, uv, vec3, mix, float, positionLocal, normalLocal } from 'three/tsl';\n\nfunction TSLCanvas({ params }) {\n  const mountRef = useRef(null);\n  const stateRef = useRef(null);\n\n  useEffect(() => {\n    const el = mountRef.current;\n    const w = el.clientWidth;\n    const h = el.clientHeight;\n\n    const scene = new THREE.Scene();\n    const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100);\n    camera.position.z = 4;\n\n    const renderer = new THREE.WebGPURenderer({ antialias: true });\n    renderer.setSize(w, h);\n    renderer.setPixelRatio(window.devicePixelRatio);\n    el.appendChild(renderer.domElement);\n\n    scene.add(new THREE.AmbientLight(0xffffff, 0.5));\n    const point = new THREE.PointLight(0xffffff, 1.5, 100);\n    point.position.set(5, 5, 5);\n    scene.add(point);\n\n    const colorAU = uniform(new THREE.Color(0x22d3ee));\n    const colorBU = uniform(new THREE.Color(0xa78bfa));\n\n    const t = time;\n    const uvNode = uv();\n    const wave = sin(uvNode.x.mul(6.28).add(t)).mul(0.5).add(0.5);\n    const pulse = cos(t.mul(0.7)).mul(0.5).add(0.5);\n    const blend = mix(vec3(colorAU), vec3(colorBU), wave.mul(pulse));\n\n    const mat = new THREE.MeshStandardNodeMaterial();\n    mat.colorNode = blend;\n    mat.roughnessNode = float(0.3);\n    mat.metalnessNode = float(0.7);\n\n    const displaceAmount = sin(positionLocal.y.mul(4.0).add(t)).mul(0.08);\n    mat.positionNode = positionLocal.add(normalLocal.mul(displaceAmount));\n\n    const geo = new THREE.TorusKnotGeometry(1, 0.35, 128, 32);\n    const mesh = new THREE.Mesh(geo, mat);\n    scene.add(mesh);\n\n    const targetA = new THREE.Color(0x22d3ee);\n    const targetB = new THREE.Color(0xa78bfa);\n    const st = { mesh, scene, camera, renderer, colorAU, colorBU, targetA, targetB };\n    stateRef.current = st;\n\n    let raf;\n    const timer = new THREE.Timer();\n    function animate() {\n      raf = requestAnimationFrame(animate);\n      timer.update();\n      const dt = timer.getDelta();\n      mesh.rotation.x += 0.3 * dt;\n      mesh.rotation.y += 0.6 * dt;\n      st.colorAU.value.lerp(st.targetA, Math.min(1, 2.5 * dt));\n      st.colorBU.value.lerp(st.targetB, Math.min(1, 2.5 * dt));\n      renderer.render(scene, camera);\n    }\n\n    renderer.init().then(() => animate());\n\n    const onResize = () => {\n      const w2 = el.clientWidth;\n      const h2 = el.clientHeight;\n      camera.aspect = w2 / h2;\n      camera.updateProjectionMatrix();\n      renderer.setSize(w2, h2);\n    };\n    window.addEventListener('resize', onResize);\n\n    return () => {\n      cancelAnimationFrame(raf);\n      window.removeEventListener('resize', onResize);\n      renderer.dispose();\n      geo.dispose();\n      mat.dispose();\n      el.removeChild(renderer.domElement);\n    };\n  }, []);\n\n  useEffect(() => {\n    const s = stateRef.current;\n    if (!s) return;\n    s.targetA.set(params.colorA);\n    s.targetB.set(params.colorB);\n  }, [params.colorA, params.colorB]);\n\n  return <div ref={mountRef} className=\"flex-1\" />;\n}",
+    "compInputs": "params",
+    "compOutputs": "",
+    "x": 160,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-webgpu-comp-statusbar",
+    "type": "fc-portal-component",
+    "z": "fc-webgpu-flow",
+    "compName": "TSLStatusBar",
+    "compCode": "function TSLStatusBar({ params }) {\n  return (\n    <div className=\"px-6 py-4 bg-zinc-900/50 border-t border-zinc-800/50 flex items-center gap-6 flex-wrap\">\n      <Stat label=\"Color A\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{backgroundColor: params.colorA}} />\n      </Stat>\n      <Stat label=\"Color B\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{backgroundColor: params.colorB}} />\n      </Stat>\n      <Stat label=\"Backend\">\n        <span className=\"text-xs font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300\">WebGPU / TSL</span>\n      </Stat>\n    </div>\n  );\n}",
+    "compInputs": "params",
+    "compOutputs": "",
+    "x": 360,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-webgpu-inject",
+    "type": "inject",
+    "z": "fc-webgpu-flow",
+    "name": "Tick",
+    "props": [{ "p": "payload" }],
+    "repeat": "3",
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 160,
+    "wires": [["fc-webgpu-func"]]
+  },
+  {
+    "id": "fc-webgpu-func",
+    "type": "function",
+    "z": "fc-webgpu-flow",
+    "name": "Random TSL params",
+    "func": "const pairs = [\n  ['#22d3ee','#a78bfa'],\n  ['#a78bfa','#f97316'],\n  ['#34d399','#e879f9'],\n  ['#f97316','#60a5fa'],\n  ['#f87171','#34d399'],\n  ['#e879f9','#22d3ee'],\n  ['#fbbf24','#f87171']\n];\nconst p = pairs[Math.floor(Math.random() * pairs.length)];\nmsg.payload = { colorA: p[0], colorB: p[1] };\nreturn msg;",
+    "outputs": 1,
+    "x": 360,
+    "y": 160,
+    "wires": [["fc-webgpu-portal"]]
+  },
+  {
+    "id": "fc-webgpu-portal",
+    "type": "portal-react",
+    "z": "fc-webgpu-flow",
+    "name": "WebGPU Portal",
+    "endpoint": "/fromcubes/webgpu",
+    "pageTitle": "fromcubes WebGPU",
+    "customHead": "",
+    "portalAuth": false,
+    "showWsStatus": false,
+    "libs": [
+      { "module": "three", "var": "THREE" }
+    ],
+    "componentCode": "function App() {\n  const { data } = useNodeRed();\n  const params = data || { colorA: '#22d3ee', colorB: '#a78bfa' };\n\n  return (\n    <Page>\n      <Header title=\"fromcubes WebGPU\" subtitle=\"Three.js TSL + live Node-RED data\" />\n      <TSLCanvas params={params} />\n      <TSLStatusBar params={params} />\n    </Page>\n  );\n}",
+    "x": 560,
+    "y": 160,
+    "wires": [["fc-webgpu-debug"]]
+  },
+  {
+    "id": "fc-webgpu-debug",
+    "type": "debug",
+    "z": "fc-webgpu-flow",
+    "name": "WebGPU output",
+    "active": true,
+    "tosidebar": true,
+    "x": 750,
+    "y": 160,
+    "wires": []
+  }
+]

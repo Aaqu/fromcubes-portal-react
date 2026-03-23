@@ -23,12 +23,6 @@ module.exports = function (RED) {
   }
   const registry = RED.settings.fcPortalRegistry;
 
-  // CSS cache: hash → css string
-  if (!RED.settings.fcCssCache) {
-    RED.settings.fcCssCache = {};
-  }
-  const cssCache = RED.settings.fcCssCache;
-
   // Active upgrade handlers per node id (for cleanup on redeploy)
   if (!RED.settings.fcUpgradeHandlers) {
     RED.settings.fcUpgradeHandlers = {};
@@ -52,12 +46,6 @@ module.exports = function (RED) {
     RED.settings.fcRebuildCallbacks = {};
   }
   const rebuildCallbacks = RED.settings.fcRebuildCallbacks;
-
-  // Vendor bundle cache: cacheKey → { js, hash }
-  if (!RED.settings.fcVendorCache) {
-    RED.settings.fcVendorCache = {};
-  }
-  const vendorCache = RED.settings.fcVendorCache;
 
   // ── Helpers ───────────────────────────────────────────────────
 
@@ -92,121 +80,31 @@ module.exports = function (RED) {
   const pkgRoot = path.join(__dirname, "..");
   // userDir — where dynamicModuleList installs user packages
   const userDir = RED.settings.userDir || path.join(__dirname, "../../..");
-  // esbuild resolveDir: package root (react is here); nodePaths adds userDir for user libs
-  const resolveDir = pkgRoot;
 
-  function getPackageName(moduleSpec) {
-    const m = moduleSpec.match(/^((?:@[^/]+\/)?[^/]+)/);
-    return m ? m[1] : moduleSpec;
-  }
 
-  function getInstalledVersion(pkgName) {
-    try {
-      const pkgJson = require(
-        require.resolve(pkgName + "/package.json", { paths: [pkgRoot, userDir] }),
-      );
-      return pkgJson.version;
-    } catch {
-      return null;
-    }
-  }
-
-  function buildVendorBundle(libs) {
-    const lines = [
-      'import React from "react";',
-      'import ReactDOM from "react-dom";',
-      'import { createRoot } from "react-dom/client";',
-      "window.React = React;",
-      "window.ReactDOM = ReactDOM;",
-      "window.ReactDOM.createRoot = createRoot;",
-    ];
-    if (libs.length > 0) {
-      lines.push("if(!window.__pkg) window.__pkg = {};");
-      libs.forEach((lib, i) => {
-        lines.push(`import * as __p${i} from ${JSON.stringify(lib.module)};`);
-        lines.push(`window.__pkg[${JSON.stringify(lib.module)}] = __p${i}.default || __p${i};`);
-      });
-    }
-    const contents = lines.join("\n");
-    const buildResult = esbuild.buildSync({
-      stdin: { contents, resolveDir, loader: "js" },
-      bundle: true,
-      format: "iife",
-      minify: true,
-      write: false,
-      target: ["es2020"],
-      define: { "process.env.NODE_ENV": '"production"' },
-      logOverride: { "import-is-undefined": "silent" },
-      nodePaths: [path.join(userDir, "node_modules")],
-    });
-    const js = buildResult.outputFiles[0].text;
-    const h = hash(js);
-    return { js, hash: h };
-  }
-
-  function getVendorBundle(libs) {
-    // Build cache key from actual installed versions
-    const keyParts = ["react@" + getInstalledVersion("react")];
-    for (const lib of libs) {
-      keyParts.push(lib.module + "@" + getInstalledVersion(getPackageName(lib.module)));
-    }
-    keyParts.sort();
-    const cacheKey = hash(JSON.stringify(keyParts));
-
-    if (vendorCache[cacheKey]) return vendorCache[cacheKey];
-
-    const bundle = buildVendorBundle(libs);
-    vendorCache[cacheKey] = bundle;
-    return bundle;
-  }
-
-  function transpile(jsx, libs) {
-    const externalList = ["react", "react-dom", "react-dom/client"];
-    if (libs) {
-      libs.forEach((lib) => {
-        if (!externalList.includes(lib.module)) {
-          externalList.push(lib.module);
-        }
-      });
-    }
-
-    // Auto-detect require() calls in JSX and add them as externals
-    const requireRe = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-    let m;
-    while ((m = requireRe.exec(jsx)) !== null) {
-      if (!externalList.includes(m[1])) {
-        externalList.push(m[1]);
-      }
-    }
-
-    const requireShim = [
-      "var require = (function() {",
-      '  var _r = {"react":window.React, "react-dom":window.ReactDOM, "react-dom/client":window.ReactDOM};',
-      "  return function(m) {",
-      "    if (_r[m]) return _r[m];",
-      "    if (window.__pkg && window.__pkg[m]) return window.__pkg[m];",
-      '    throw new Error("Module not found: " + m);',
-      "  };",
-      "})();",
-    ].join("\n");
-
+  function transpile(jsx) {
     try {
       const buildResult = esbuild.buildSync({
         stdin: {
           contents: jsx,
-          resolveDir,
+          resolveDir: pkgRoot,
           loader: "jsx",
         },
         bundle: true,
         format: "iife",
+        minify: true,
         write: false,
         target: ["es2020"],
         jsx: "transform",
         jsxFactory: "React.createElement",
         jsxFragment: "React.Fragment",
-        external: externalList,
         define: { "process.env.NODE_ENV": '"production"' },
-        banner: { js: requireShim },
+        logOverride: { "import-is-undefined": "silent" },
+        nodePaths: [path.join(userDir, "node_modules")],
+        alias: {
+          "react": path.dirname(require.resolve("react/package.json", { paths: [pkgRoot] })),
+          "react-dom": path.dirname(require.resolve("react-dom/package.json", { paths: [pkgRoot] })),
+        },
       });
       return { js: buildResult.outputFiles[0].text, error: null };
     } catch (e) {
@@ -215,13 +113,11 @@ module.exports = function (RED) {
   }
 
   async function generateCSS(source) {
-    const key = hash(source);
-    if (cssCache[key]) return cssCache[key];
+    const cssHash = hash(source);
     const compiled = await getTwCompiled();
     const candidates = [...new Set(source.match(CANDIDATE_RE) || [])];
     const css = compiled.build(candidates);
-    cssCache[key] = css;
-    return css;
+    return { css, cssHash };
   }
 
   const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
@@ -320,25 +216,24 @@ module.exports = function (RED) {
     const libs = config.libs || [];
 
     // State
-    const clients = new Set();
+    const clients = new Map(); // portalId → ws
     let lastPayload = null;
     let wsServer = null;
     let isClosing = false;
+
+    if (libs.length > 0) {
+      const names = libs.map((l) => l.module).join(", ");
+      node.status({ fill: "blue", shape: "ring", text: `installing ${names}...` });
+    } else {
+      node.status({ fill: "yellow", shape: "ring", text: "starting..." });
+    }
 
     const wsPath = nodeRoot + endpoint + "/_ws";
 
     // ── Rebuild: transpile JSX + update page state ────────────
 
     function rebuild() {
-      // Build or get cached vendor bundle
-      let vendorBundle;
-      try {
-        vendorBundle = getVendorBundle(libs);
-      } catch (e) {
-        node.error("Vendor bundle failed: " + e.message);
-        node.status({ fill: "red", shape: "dot", text: "vendor build error" });
-        return;
-      }
+      node.status({ fill: "yellow", shape: "dot", text: "building..." });
 
       // Selective injection: only include components referenced in user code (+ transitive deps)
       const allEntries = Object.entries(registry);
@@ -378,7 +273,21 @@ module.exports = function (RED) {
         )
         .join("\n\n");
 
+      // Extract import statements from library/user code so they appear at top level
+      const importRe = /^import\s+.+?from\s+['"].+?['"];?\s*$/gm;
+      const libImports = libraryJsx.match(importRe) || [];
+      const userImports = componentCode.match(importRe) || [];
+      const cleanLibJsx = libraryJsx.replace(importRe, "").trim();
+      const cleanCompCode = componentCode.replace(importRe, "").trim();
+
       const fullJsx = [
+        "// ── Imports ──",
+        'import React from "react";',
+        'import ReactDOM from "react-dom";',
+        'import { createRoot } from "react-dom/client";',
+        ...libImports,
+        ...userImports,
+        "",
         "// ── React shorthand ──",
         "Object.keys(React).filter(k => /^use[A-Z]/.test(k)).forEach(k => { window[k] = React[k]; });",
         "const { createContext, memo, forwardRef, Fragment } = React;",
@@ -394,54 +303,66 @@ module.exports = function (RED) {
           "    window.__NR.send(payload, topic);",
           "  }, []);",
           "  const user = window.__NR._user || null;",
-          "  return { data, send, user };",
+          "  const portalClient = window.__NR._portalClient;",
+          "  return { data, send, user, portalClient };",
           "}",
         ].join("\n"),
         "",
         "// ── Library components ──",
-        libraryJsx,
+        cleanLibJsx,
         "",
         "// ── View component ──",
-        componentCode,
+        cleanCompCode,
         "",
         "// ── Mount ──",
-        "ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));",
+        "createRoot(document.getElementById('root')).render(React.createElement(App));",
       ].join("\n");
 
-      const compiled = transpile(fullJsx, libs);
+      const compiled = transpile(fullJsx);
 
       if (compiled.error) {
         node.error("JSX transpile error: " + compiled.error);
         node.status({ fill: "red", shape: "dot", text: "transpile error" });
       } else {
-        node.status({ fill: "grey", shape: "ring", text: endpoint });
+        node.status({ fill: "green", shape: "dot", text: `built • ${endpoint}` });
       }
 
-      const cssHashReady = !compiled.error
-        ? generateCSS(fullJsx)
-            .then((css) => {
-              node.status({ fill: "grey", shape: "ring", text: endpoint });
-              return css ? hash(fullJsx) : "";
-            })
-            .catch((err) => {
-              node.warn("Tailwind CSS generation failed: " + err.message);
-              return "";
-            })
-        : Promise.resolve("");
-
       const contentHash = compiled.js ? hash(compiled.js) : "";
+      const prevState = pageState[endpoint];
+      const jsxHash = hash(fullJsx);
+
+      const cssReady = !compiled.error
+        ? (prevState?.jsxHash === jsxHash && prevState?.css
+            ? Promise.resolve({ css: prevState.css, cssHash: prevState.cssHash })
+            : generateCSS(fullJsx))
+          .catch((err) => {
+            node.warn("Tailwind CSS generation failed: " + err.message);
+            return { css: "", cssHash: "" };
+          })
+        : Promise.resolve({ css: "", cssHash: "" });
 
       pageState[endpoint] = {
         compiled,
         contentHash,
-        cssHashReady,
+        cssReady,
+        jsxHash,
+        css: null,
+        cssHash: "",
         pageTitle,
         wsPath,
         customHead,
         portalAuth,
         showWsStatus,
-        vendorHash: vendorBundle.hash,
       };
+
+      cssReady.then(({ css, cssHash }) => {
+        const state = pageState[endpoint];
+        if (state && state.jsxHash === jsxHash) {
+          state.css = css;
+          state.cssHash = cssHash;
+          node.status({ fill: "green", shape: "dot", text: `built • ${endpoint}` });
+        }
+      });
     }
 
     // Register rebuild callback so library components can trigger re-transpile
@@ -467,7 +388,7 @@ module.exports = function (RED) {
               .send(buildErrorPage(state.pageTitle, state.compiled.error));
             return;
           }
-          const cssHash = await state.cssHashReady;
+          const { cssHash } = await state.cssReady;
           const user = state.portalAuth
             ? extractPortalUser(_req.headers)
             : null;
@@ -482,7 +403,6 @@ module.exports = function (RED) {
                 cssHash,
                 user,
                 state.showWsStatus,
-                state.vendorHash,
               ),
             );
         });
@@ -525,10 +445,12 @@ module.exports = function (RED) {
             ws.close();
             return;
           }
+          const portalClient = crypto.randomUUID();
+          ws._portalClient = portalClient;
           if (portalAuth) {
             ws._portalUser = extractPortalUser(request.headers);
           }
-          clients.add(ws);
+          clients.set(portalClient, ws);
           updateStatus();
 
           // Push current state to new client
@@ -540,6 +462,9 @@ module.exports = function (RED) {
           const contentHash = pageState[endpoint]?.contentHash || "";
           wsSend(ws, { type: "version", hash: contentHash });
 
+          // Send assigned portalClient to browser
+          wsSend(ws, { type: "hello", portalClient });
+
           ws.on("message", (raw) => {
             try {
               const msg = JSON.parse(raw.toString());
@@ -548,9 +473,11 @@ module.exports = function (RED) {
                   payload: msg.payload,
                   topic: msg.topic || "",
                 };
+                const client = { portalClient: ws._portalClient };
                 if (portalAuth && ws._portalUser) {
-                  out._client = ws._portalUser;
+                  Object.assign(client, ws._portalUser);
                 }
+                out._client = client;
                 node.send(out);
               }
             } catch (e) {
@@ -559,12 +486,12 @@ module.exports = function (RED) {
           });
 
           ws.on("close", () => {
-            clients.delete(ws);
+            clients.delete(portalClient);
             updateStatus();
           });
 
           ws.on("error", () => {
-            clients.delete(ws);
+            clients.delete(portalClient);
             updateStatus();
           });
         });
@@ -575,11 +502,33 @@ module.exports = function (RED) {
       // ── Input handler ─────────────────────────────────────────
 
       node.on("input", (msg, send, done) => {
-        lastPayload = msg.payload;
+        const target = msg._client;
         const frame = JSON.stringify({ type: "data", payload: msg.payload });
-        clients.forEach((ws) => {
-          if (ws.readyState === 1) ws.send(frame);
-        });
+
+        if (target && target.portalClient) {
+          // Target specific client by portalClient
+          const ws = clients.get(target.portalClient);
+          if (ws && ws.readyState === 1) ws.send(frame);
+        } else if (target && (target.userId || target.username)) {
+          // Target all sessions of a specific user
+          const matchId = target.userId;
+          const matchName = target.username;
+          clients.forEach((ws) => {
+            if (ws.readyState !== 1) return;
+            const u = ws._portalUser;
+            if (!u) return;
+            if ((matchId && u.userId === matchId) || (matchName && u.username === matchName)) {
+              ws.send(frame);
+            }
+          });
+        } else {
+          // Broadcast to all (default)
+          lastPayload = msg.payload;
+          clients.forEach((ws) => {
+            if (ws.readyState === 1) ws.send(frame);
+          });
+        }
+
         updateStatus();
         if (done) done();
       });
@@ -668,9 +617,16 @@ module.exports = function (RED) {
     res.json(twClassesCache);
   });
 
-  // ── Vendor CSS endpoint (per content hash) ─────────────────
+  // ── Vendor CSS endpoint (per page, looked up from pageState) ─────────
   RED.httpAdmin.get("/portal-react/css/:hash.css", (req, res) => {
-    const css = cssCache[req.params.hash];
+    const reqHash = req.params.hash;
+    let css = null;
+    for (const ep in pageState) {
+      if (pageState[ep]?.cssHash === reqHash) {
+        css = pageState[ep].css;
+        break;
+      }
+    }
     if (!css) {
       res.status(404).send("Not found");
       return;
@@ -680,23 +636,6 @@ module.exports = function (RED) {
       "Cache-Control": "public, max-age=31536000, immutable",
     });
     res.send(css);
-  });
-
-  // ── Vendor bundle endpoint (dynamic, hash-based) ───────────
-  RED.httpAdmin.get("/portal-react/vendor/:hash.js", (req, res) => {
-    const entry = Object.values(vendorCache).find(
-      (v) => v.hash === req.params.hash,
-    );
-    if (!entry) {
-      res.status(404).send("Not found");
-      return;
-    }
-    res.set({
-      "Content-Type": "application/javascript",
-      "Cache-Control": "public, max-age=31536000, immutable",
-      ETag: `"${req.params.hash}"`,
-    });
-    res.send(entry.js);
   });
 
   // ── Admin API for component registry ──────────────────────────
@@ -723,14 +662,13 @@ module.exports = function (RED) {
 
   // ── Page builders ─────────────────────────────────────────────
 
-  function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showWsStatus, vendorHash) {
+  function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showWsStatus) {
     return `<!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width,initial-scale=1.0">
       <title>${esc(title)}</title>
-      <script src="${adminRoot}/portal-react/vendor/${vendorHash}.js"><\/script>
       ${cssHash ? `<link rel="stylesheet" href="${adminRoot}/portal-react/css/${cssHash}.css">` : ""}
       ${escScript(customHead)}
       ${showWsStatus ? `<style>
@@ -756,6 +694,7 @@ module.exports = function (RED) {
           _retries: 0,
           _wasConnected: false,
           _version: null,
+          _portalClient: null,
           _user: ${user ? escScript(JSON.stringify(user)) : "null"},
 
           connect() {
@@ -773,6 +712,9 @@ module.exports = function (RED) {
             ws.onmessage = (e) => {
               try {
                 const m = JSON.parse(e.data);
+                if (m.type === 'hello') {
+                  this._portalClient = m.portalClient;
+                }
                 if (m.type === 'version') {
                   if (this._version && this._version !== m.hash) { location.reload(); return; }
                   this._version = m.hash;

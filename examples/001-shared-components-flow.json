@@ -1,0 +1,68 @@
+[
+  {
+    "id": "fc-shared-flow",
+    "type": "tab",
+    "label": "Shared Components",
+    "disabled": false
+  },
+  {
+    "id": "fc-shared-comp-header",
+    "type": "fc-portal-component",
+    "z": "fc-shared-flow",
+    "compName": "Header",
+    "compCode": "function Header({ title = 'fromcubes', subtitle = '', children }) {\n  return (\n    <div className=\"flex items-center justify-between px-6 py-4\">\n      <div>\n        <h1 className=\"text-xl font-semibold text-zinc-100 tracking-tight\">{title}</h1>\n        {subtitle && <p className=\"text-xs text-zinc-600 mt-0.5\">{subtitle}</p>}\n      </div>\n      <div className=\"flex items-center gap-2\">\n        {children || (\n          <>\n            <span className=\"inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse\" />\n            <span className=\"text-xs text-zinc-500\">streaming</span>\n          </>\n        )}\n      </div>\n    </div>\n  );\n}",
+    "compInputs": "title,subtitle,children",
+    "compOutputs": "",
+    "x": 160,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "fc-shared-comp-stat",
+    "type": "fc-portal-component",
+    "z": "fc-shared-flow",
+    "compName": "Stat",
+    "compCode": "function Stat({ label, children }) {\n  return (\n    <div className=\"flex items-center gap-3\">\n      <span className=\"text-xs text-zinc-500\">{label}</span>\n      {children}\n    </div>\n  );\n}",
+    "compInputs": "label,children",
+    "compOutputs": "",
+    "x": 360,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "fc-shared-comp-button",
+    "type": "fc-portal-component",
+    "z": "fc-shared-flow",
+    "compName": "Button",
+    "compCode": "function Button({ onClick, children, variant = 'primary', className = '' }) {\n  const base = 'px-4 py-2 rounded-lg font-medium transition-colors';\n  const variants = {\n    primary: 'bg-blue-600 text-white hover:bg-blue-500',\n    secondary: 'bg-zinc-700 text-zinc-200 hover:bg-zinc-600',\n    danger: 'bg-red-600 text-white hover:bg-red-500'\n  };\n  return (\n    <button\n      className={`${base} ${variants[variant] || variants.primary} ${className}`}\n      onClick={onClick}\n    >{children}</button>\n  );\n}",
+    "compInputs": "onClick,children,variant,className",
+    "compOutputs": "",
+    "x": 560,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "fc-shared-comp-valuebadge",
+    "type": "fc-portal-component",
+    "z": "fc-shared-flow",
+    "compName": "ValueBadge",
+    "compCode": "function ValueBadge({ label, value, className = '' }) {\n  if (value == null) return null;\n  return (\n    <span className={`text-zinc-600 text-xs ${className}`}>\n      {label && <>{label}: </>}{value}\n    </span>\n  );\n}",
+    "compInputs": "label,value,className",
+    "compOutputs": "",
+    "x": 760,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "fc-shared-comp-page",
+    "type": "fc-portal-component",
+    "z": "fc-shared-flow",
+    "compName": "Page",
+    "compCode": "function Page({ children, className = '' }) {\n  return (\n    <div className={`min-h-screen bg-zinc-950 text-zinc-100 flex flex-col ${className}`}>\n      {children}\n    </div>\n  );\n}",
+    "compInputs": "children,className",
+    "compOutputs": "",
+    "x": 160,
+    "y": 240,
+    "wires": []
+  }
+]

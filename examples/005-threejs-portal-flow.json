@@ -1,0 +1,97 @@
+[
+  {
+    "id": "fc-three-flow",
+    "type": "tab",
+    "label": "Three.js Demo",
+    "disabled": false
+  },
+  {
+    "id": "fc-three-comp-shapeselector",
+    "type": "fc-portal-component",
+    "z": "fc-three-flow",
+    "compName": "ShapeSelector",
+    "compCode": "function ShapeSelector({ current, onSelect }) {\n  const shapes = ['box', 'sphere', 'torus', 'knot'];\n  return (\n    <div className=\"flex gap-2\">\n      {shapes.map(s => (\n        <button\n          key={s}\n          onClick={() => onSelect(s)}\n          className={`px-3 py-1.5 rounded-md text-xs transition-colors ${\n            current === s\n              ? 'bg-cyan-600 text-white'\n              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'\n          }`}\n        >{s}</button>\n      ))}\n    </div>\n  );\n}",
+    "compInputs": "current,onSelect",
+    "compOutputs": "",
+    "x": 160,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-three-comp-statusbar",
+    "type": "fc-portal-component",
+    "z": "fc-three-flow",
+    "compName": "StatusBar",
+    "compCode": "function StatusBar({ params, onShapeSelect }) {\n  return (\n    <div className=\"px-6 py-4 bg-zinc-900/50 border-t border-zinc-800/50 flex items-center gap-6 flex-wrap\">\n      <ShapeSelector current={params.shape} onSelect={onShapeSelect} />\n      <Stat label=\"Speed\">\n        <span className=\"text-sm font-mono text-cyan-400\">{params.rotSpeed}x</span>\n      </Stat>\n      <Stat label=\"Scale\">\n        <span className=\"text-sm font-mono text-cyan-400\">{params.scale}x</span>\n      </Stat>\n      <Stat label=\"Color\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{backgroundColor: params.color}} />\n      </Stat>\n    </div>\n  );\n}",
+    "compInputs": "params,onShapeSelect",
+    "compOutputs": "",
+    "x": 360,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-three-comp-canvas",
+    "type": "fc-portal-component",
+    "z": "fc-three-flow",
+    "compName": "ThreeCanvas",
+    "compCode": "import { Scene, PerspectiveCamera, WebGLRenderer, AmbientLight, PointLight, MeshStandardMaterial, Mesh, Timer, BoxGeometry, SphereGeometry, TorusGeometry, TorusKnotGeometry } from 'three';\n\nfunction ThreeCanvas({ params }) {\n  const mountRef = useRef(null);\n  const stateRef = useRef(null);\n\n  useEffect(() => {\n    const el = mountRef.current;\n    const w = el.clientWidth;\n    const h = el.clientHeight;\n\n    const scene = new Scene();\n    const camera = new PerspectiveCamera(50, w / h, 0.1, 100);\n    camera.position.z = 4;\n\n    const renderer = new WebGLRenderer({ antialias: true, alpha: true });\n    renderer.setSize(w, h);\n    renderer.setPixelRatio(window.devicePixelRatio);\n    el.appendChild(renderer.domElement);\n\n    scene.add(new AmbientLight(0xffffff, 0.4));\n    const point = new PointLight(0xffffff, 1.2, 100);\n    point.position.set(5, 5, 5);\n    scene.add(point);\n\n    const mat = new MeshStandardMaterial({ color: 0x22d3ee, roughness: 0.3, metalness: 0.7 });\n    const geo = new TorusKnotGeometry(1, 0.35, 100, 16);\n    const mesh = new Mesh(geo, mat);\n    scene.add(mesh);\n\n    const timer = new Timer();\n    const st = { mesh, scene, camera, renderer, timer, speed: 1 };\n    stateRef.current = st;\n\n    let raf;\n    function animate() {\n      raf = requestAnimationFrame(animate);\n      timer.update();\n      const dt = timer.getDelta();\n      mesh.rotation.x += 0.5 * st.speed * dt;\n      mesh.rotation.y += 1.0 * st.speed * dt;\n      renderer.render(scene, camera);\n    }\n    animate();\n\n    const onResize = () => {\n      const w2 = el.clientWidth;\n      const h2 = el.clientHeight;\n      camera.aspect = w2 / h2;\n      camera.updateProjectionMatrix();\n      renderer.setSize(w2, h2);\n    };\n    window.addEventListener('resize', onResize);\n\n    return () => {\n      cancelAnimationFrame(raf);\n      window.removeEventListener('resize', onResize);\n      renderer.dispose();\n      geo.dispose();\n      mat.dispose();\n      el.removeChild(renderer.domElement);\n    };\n  }, []);\n\n  useEffect(() => {\n    const s = stateRef.current;\n    if (!s) return;\n    s.speed = params.rotSpeed;\n    s.mesh.material.color.set(params.color);\n    s.mesh.scale.setScalar(params.scale);\n\n    const geoMap = {\n      box: () => new BoxGeometry(1.4, 1.4, 1.4),\n      sphere: () => new SphereGeometry(1, 32, 32),\n      torus: () => new TorusGeometry(1, 0.4, 16, 48),\n      knot: () => new TorusKnotGeometry(1, 0.35, 100, 16)\n    };\n    const makeFn = geoMap[params.shape] || geoMap.knot;\n    const oldGeo = s.mesh.geometry;\n    s.mesh.geometry = makeFn();\n    oldGeo.dispose();\n  }, [params.color, params.scale, params.shape, params.rotSpeed]);\n\n  return <div ref={mountRef} className=\"flex-1\" />;\n}",
+    "compInputs": "params",
+    "compOutputs": "",
+    "x": 560,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "fc-three-inject",
+    "type": "inject",
+    "z": "fc-three-flow",
+    "name": "Tick",
+    "props": [{ "p": "payload" }],
+    "repeat": "3",
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 160,
+    "wires": [["fc-three-func"]]
+  },
+  {
+    "id": "fc-three-func",
+    "type": "function",
+    "z": "fc-three-flow",
+    "name": "Random params",
+    "func": "msg.payload = {\n  rotSpeed: +(0.2 + Math.random() * 1.8).toFixed(2),\n  color: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0'),\n  scale: +(0.5 + Math.random() * 1.5).toFixed(2),\n  shape: ['box','sphere','torus','knot'][Math.floor(Math.random()*4)]\n};\nreturn msg;",
+    "outputs": 1,
+    "x": 360,
+    "y": 160,
+    "wires": [["fc-three-portal"]]
+  },
+  {
+    "id": "fc-three-portal",
+    "type": "portal-react",
+    "z": "fc-three-flow",
+    "name": "3D Portal",
+    "endpoint": "/fromcubes/3d",
+    "pageTitle": "fromcubes 3D",
+    "customHead": "",
+    "portalAuth": false,
+    "showWsStatus": false,
+    "libs": [
+      { "module": "three", "var": "THREE" }
+    ],
+    "componentCode": "function App() {\n  const { data, send } = useNodeRed();\n  const params = data || { rotSpeed: 1, color: '#22d3ee', scale: 1, shape: 'knot' };\n\n  return (\n    <Page>\n      <Header title=\"fromcubes 3D\" subtitle=\"Three.js + live Node-RED data\" />\n      <ThreeCanvas params={params} />\n      <StatusBar params={params} onShapeSelect={(s) => send({ shape: s })} />\n    </Page>\n  );\n}",
+    "x": 560,
+    "y": 160,
+    "wires": [["fc-three-debug"]]
+  },
+  {
+    "id": "fc-three-debug",
+    "type": "debug",
+    "z": "fc-three-flow",
+    "name": "3D output",
+    "active": true,
+    "tosidebar": true,
+    "x": 750,
+    "y": 160,
+    "wires": []
+  }
+]
