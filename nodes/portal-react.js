@@ -47,6 +47,16 @@ module.exports = function (RED) {
   }
   const rebuildCallbacks = RED.settings.fcRebuildCallbacks;
 
+  // Debounced rebuild-all: coalesces multiple component registrations into one rebuild pass
+  let _rebuildTimer = null;
+  function scheduleRebuildAll() {
+    if (_rebuildTimer) clearTimeout(_rebuildTimer);
+    _rebuildTimer = setTimeout(() => {
+      _rebuildTimer = null;
+      Object.values(rebuildCallbacks).forEach((fn) => fn());
+    }, 50);
+  }
+
   // ── Helpers ───────────────────────────────────────────────────
 
   function hash(str) {
@@ -81,6 +91,17 @@ module.exports = function (RED) {
   // userDir — where dynamicModuleList installs user packages
   const userDir = RED.settings.userDir || path.join(__dirname, "../../..");
 
+  // Skip npm install for packages already present in node_modules (offline/Docker)
+  // https://nodered.org/docs/api/hooks/install/
+  RED.hooks.add("preInstall.fcPortal", (event) => {
+    try {
+      const modDir = path.join(event.dir, "node_modules", event.module);
+      if (fs.existsSync(modDir)) {
+        RED.log.info(`[portal-react] ${event.module} already in node_modules, skipping install`);
+        return false;
+      }
+    } catch (_) {}
+  });
 
   function transpile(jsx) {
     try {
@@ -99,6 +120,7 @@ module.exports = function (RED) {
         jsxFactory: "React.createElement",
         jsxFragment: "React.Fragment",
         define: { "process.env.NODE_ENV": '"production"' },
+        metafile: true,
         logOverride: { "import-is-undefined": "silent" },
         nodePaths: [path.join(userDir, "node_modules")],
         alias: {
@@ -106,7 +128,7 @@ module.exports = function (RED) {
           "react-dom": path.dirname(require.resolve("react-dom/package.json", { paths: [pkgRoot] })),
         },
       });
-      return { js: buildResult.outputFiles[0].text, error: null };
+      return { js: buildResult.outputFiles[0].text, metafile: buildResult.metafile, error: null };
     } catch (e) {
       return { js: null, error: e.message };
     }
@@ -187,10 +209,8 @@ module.exports = function (RED) {
 
     node.status({ fill: "green", shape: "dot", text: compName });
 
-    // Trigger re-transpile on all portal-react nodes (after all nodes init)
-    setImmediate(() => {
-      Object.values(rebuildCallbacks).forEach((fn) => fn());
-    });
+    // Trigger re-transpile on all portal-react nodes (debounced across all component registrations)
+    scheduleRebuildAll();
 
     node.on("close", function (removed, done) {
       delete registry[compName];
@@ -222,8 +242,7 @@ module.exports = function (RED) {
     let isClosing = false;
 
     if (libs.length > 0) {
-      const names = libs.map((l) => l.module).join(", ");
-      node.status({ fill: "blue", shape: "ring", text: `installing ${names}...` });
+      node.status({ fill: "blue", shape: "ring", text: "loading libs..." });
     } else {
       node.status({ fill: "yellow", shape: "ring", text: "starting..." });
     }
@@ -280,6 +299,26 @@ module.exports = function (RED) {
       const cleanLibJsx = libraryJsx.replace(importRe, "").trim();
       const cleanCompCode = componentCode.replace(importRe, "").trim();
 
+      // Warn about import * (prevents tree-shaking)
+      const starRe = /^import\s+\*\s+as\s+(\w+)\s+from\s+['"](.+?)['"];?\s*$/;
+      const allCode = cleanLibJsx + "\n" + cleanCompCode;
+      for (const imp of [...libImports, ...userImports]) {
+        const m = imp.match(starRe);
+        if (!m) continue;
+        const [, localName, modulePath] = m;
+        const propRe = new RegExp(`\\b${localName}\\s*\\??\\s*\\.\\s*(\\w+)`, "g");
+        const props = new Set();
+        let pm;
+        while ((pm = propRe.exec(allCode)) !== null) props.add(pm[1]);
+        if (props.size > 0) {
+          const named = [...props].sort().join(", ");
+          node.warn(
+            `"import * as ${localName}" bundles entire ${modulePath} library. ` +
+            `For smaller builds use: import { ${named} } from '${modulePath}'`,
+          );
+        }
+      }
+
       const fullJsx = [
         "// ── Imports ──",
         'import React from "react";',
@@ -325,6 +364,17 @@ module.exports = function (RED) {
         node.status({ fill: "red", shape: "dot", text: "transpile error" });
       } else {
         node.status({ fill: "green", shape: "dot", text: `built • ${endpoint}` });
+        if (compiled.metafile) {
+          const output = Object.values(compiled.metafile.outputs)[0];
+          const sizes = output
+            ? Object.entries(output.inputs)
+                .map(([name, info]) => ({ name: name.replace(/^.*node_modules\//, ""), bytes: info.bytesInOutput }))
+                .sort((a, b) => b.bytes - a.bytes)
+                .slice(0, 5)
+            : [];
+          const totalKB = (compiled.js.length / 1024).toFixed(1);
+          node.log(`Bundle: ${totalKB}KB — top: ${sizes.map((s) => `${s.name} (${(s.bytes / 1024).toFixed(1)}KB)`).join(", ")}`);
+        }
       }
 
       const contentHash = compiled.js ? hash(compiled.js) : "";
@@ -368,9 +418,9 @@ module.exports = function (RED) {
     // Register rebuild callback so library components can trigger re-transpile
     rebuildCallbacks[nodeId] = rebuild;
 
-    // Delay initial build so all fc-portal-component nodes register first
+    // Initial build: debounced so all fc-portal-component nodes register first
+    scheduleRebuildAll();
     setImmediate(() => {
-      rebuild();
 
       // Register route only once per endpoint (persists across deploys)
       if (!registeredRoutes[endpoint]) {
