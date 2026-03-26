@@ -6,12 +6,12 @@
     "disabled": false
   },
   {
-    "id": "fc-three-comp-shapeselector",
+    "id": "fc-three-comp-box",
     "type": "fc-portal-component",
     "z": "fc-three-flow",
-    "compName": "ShapeSelector",
-    "compCode": "function ShapeSelector({ current, onSelect }) {\n  const shapes = ['box', 'sphere', 'torus', 'knot'];\n  return (\n    <div className=\"flex gap-2\">\n      {shapes.map(s => (\n        <button\n          key={s}\n          onClick={() => onSelect(s)}\n          className={`px-3 py-1.5 rounded-md text-xs transition-colors ${\n            current === s\n              ? 'bg-cyan-600 text-white'\n              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'\n          }`}\n        >{s}</button>\n      ))}\n    </div>\n  );\n}",
-    "compInputs": "current,onSelect",
+    "compName": "Box",
+    "compCode": "import { useFrame } from '@react-three/fiber';\n\nfunction Box({ position, color = 'orange', onToggle }) {\n  const ref = useRef();\n  const [hovered, hover] = useState(false);\n  const [clicked, click] = useState(false);\n\n  useFrame((state, delta) => (ref.current.rotation.x += delta));\n\n  return (\n    <mesh\n      position={position}\n      ref={ref}\n      scale={clicked ? 1.5 : 1}\n      onClick={() => {\n        click(!clicked);\n        if (onToggle) onToggle(!clicked);\n      }}\n      onPointerOver={(e) => (e.stopPropagation(), hover(true))}\n      onPointerOut={() => hover(false)}\n    >\n      <boxGeometry args={[1, 1, 1]} />\n      <meshStandardMaterial color={hovered ? 'hotpink' : color} />\n    </mesh>\n  );\n}",
+    "compInputs": "position,color,onToggle",
     "compOutputs": "",
     "x": 160,
     "y": 300,
@@ -22,22 +22,10 @@
     "type": "fc-portal-component",
     "z": "fc-three-flow",
     "compName": "StatusBar",
-    "compCode": "function StatusBar({ params, onShapeSelect }) {\n  return (\n    <div className=\"px-6 py-4 bg-zinc-900/50 border-t border-zinc-800/50 flex items-center gap-6 flex-wrap\">\n      <ShapeSelector current={params.shape} onSelect={onShapeSelect} />\n      <Stat label=\"Speed\">\n        <span className=\"text-sm font-mono text-cyan-400\">{params.rotSpeed}x</span>\n      </Stat>\n      <Stat label=\"Scale\">\n        <span className=\"text-sm font-mono text-cyan-400\">{params.scale}x</span>\n      </Stat>\n      <Stat label=\"Color\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{backgroundColor: params.color}} />\n      </Stat>\n    </div>\n  );\n}",
-    "compInputs": "params,onShapeSelect",
+    "compCode": "function StatusBar({ leftColor, rightColor, clickCount }) {\n  return (\n    <div className=\"px-6 py-4 bg-zinc-900/50 border-t border-zinc-800/50 flex items-center gap-6 flex-wrap\">\n      <Stat label=\"Left box\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{ backgroundColor: leftColor }} />\n      </Stat>\n      <Stat label=\"Right box\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{ backgroundColor: rightColor }} />\n      </Stat>\n      <Stat label=\"Clicks\">\n        <span className=\"text-sm font-mono text-cyan-400\">{clickCount}</span>\n      </Stat>\n    </div>\n  );\n}",
+    "compInputs": "leftColor,rightColor,clickCount",
     "compOutputs": "",
     "x": 360,
-    "y": 300,
-    "wires": []
-  },
-  {
-    "id": "fc-three-comp-canvas",
-    "type": "fc-portal-component",
-    "z": "fc-three-flow",
-    "compName": "ThreeCanvas",
-    "compCode": "import { Scene, PerspectiveCamera, WebGLRenderer, AmbientLight, PointLight, MeshStandardMaterial, Mesh, Timer, BoxGeometry, SphereGeometry, TorusGeometry, TorusKnotGeometry } from 'three';\n\nfunction ThreeCanvas({ params }) {\n  const mountRef = useRef(null);\n  const stateRef = useRef(null);\n\n  useEffect(() => {\n    const el = mountRef.current;\n    const w = el.clientWidth;\n    const h = el.clientHeight;\n\n    const scene = new Scene();\n    const camera = new PerspectiveCamera(50, w / h, 0.1, 100);\n    camera.position.z = 4;\n\n    const renderer = new WebGLRenderer({ antialias: true, alpha: true });\n    renderer.setSize(w, h);\n    renderer.setPixelRatio(window.devicePixelRatio);\n    el.appendChild(renderer.domElement);\n\n    scene.add(new AmbientLight(0xffffff, 0.4));\n    const point = new PointLight(0xffffff, 1.2, 100);\n    point.position.set(5, 5, 5);\n    scene.add(point);\n\n    const mat = new MeshStandardMaterial({ color: 0x22d3ee, roughness: 0.3, metalness: 0.7 });\n    const geo = new TorusKnotGeometry(1, 0.35, 100, 16);\n    const mesh = new Mesh(geo, mat);\n    scene.add(mesh);\n\n    const timer = new Timer();\n    const st = { mesh, scene, camera, renderer, timer, speed: 1 };\n    stateRef.current = st;\n\n    let raf;\n    function animate() {\n      raf = requestAnimationFrame(animate);\n      timer.update();\n      const dt = timer.getDelta();\n      mesh.rotation.x += 0.5 * st.speed * dt;\n      mesh.rotation.y += 1.0 * st.speed * dt;\n      renderer.render(scene, camera);\n    }\n    animate();\n\n    const onResize = () => {\n      const w2 = el.clientWidth;\n      const h2 = el.clientHeight;\n      camera.aspect = w2 / h2;\n      camera.updateProjectionMatrix();\n      renderer.setSize(w2, h2);\n    };\n    window.addEventListener('resize', onResize);\n\n    return () => {\n      cancelAnimationFrame(raf);\n      window.removeEventListener('resize', onResize);\n      renderer.dispose();\n      geo.dispose();\n      mat.dispose();\n      el.removeChild(renderer.domElement);\n    };\n  }, []);\n\n  useEffect(() => {\n    const s = stateRef.current;\n    if (!s) return;\n    s.speed = params.rotSpeed;\n    s.mesh.material.color.set(params.color);\n    s.mesh.scale.setScalar(params.scale);\n\n    const geoMap = {\n      box: () => new BoxGeometry(1.4, 1.4, 1.4),\n      sphere: () => new SphereGeometry(1, 32, 32),\n      torus: () => new TorusGeometry(1, 0.4, 16, 48),\n      knot: () => new TorusKnotGeometry(1, 0.35, 100, 16)\n    };\n    const makeFn = geoMap[params.shape] || geoMap.knot;\n    const oldGeo = s.mesh.geometry;\n    s.mesh.geometry = makeFn();\n    oldGeo.dispose();\n  }, [params.color, params.scale, params.shape, params.rotSpeed]);\n\n  return <div ref={mountRef} className=\"flex-1\" />;\n}",
-    "compInputs": "params",
-    "compOutputs": "",
-    "x": 560,
     "y": 300,
     "wires": []
   },
@@ -58,8 +46,8 @@
     "id": "fc-three-func",
     "type": "function",
     "z": "fc-three-flow",
-    "name": "Random params",
-    "func": "msg.payload = {\n  rotSpeed: +(0.2 + Math.random() * 1.8).toFixed(2),\n  color: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0'),\n  scale: +(0.5 + Math.random() * 1.5).toFixed(2),\n  shape: ['box','sphere','torus','knot'][Math.floor(Math.random()*4)]\n};\nreturn msg;",
+    "name": "Random colors",
+    "func": "const rnd = () => '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');\nmsg.payload = {\n  leftColor: rnd(),\n  rightColor: rnd()\n};\nreturn msg;",
     "outputs": 1,
     "x": 360,
     "y": 160,
@@ -76,9 +64,11 @@
     "portalAuth": false,
     "showWsStatus": false,
     "libs": [
-      { "module": "three", "var": "THREE" }
+      { "module": "three", "var": "THREE" },
+      { "module": "@react-three/fiber", "var": "R3F" },
+      { "module": "@react-three/drei", "var": "Drei" }
     ],
-    "componentCode": "function App() {\n  const { data, send } = useNodeRed();\n  const params = data || { rotSpeed: 1, color: '#22d3ee', scale: 1, shape: 'knot' };\n\n  return (\n    <Page>\n      <Header title=\"fromcubes 3D\" subtitle=\"Three.js + live Node-RED data\" />\n      <ThreeCanvas params={params} />\n      <StatusBar params={params} onShapeSelect={(s) => send({ shape: s })} />\n    </Page>\n  );\n}",
+    "componentCode": "import { Canvas } from '@react-three/fiber';\nimport { OrbitControls } from '@react-three/drei';\n\nfunction App() {\n  const { data, send } = useNodeRed();\n  const colors = data || { leftColor: 'orange', rightColor: 'cyan' };\n  const [clickCount, setClickCount] = useState(0);\n\n  const handleToggle = useCallback((clicked) => {\n    setClickCount(prev => prev + 1);\n    send({ action: clicked ? 'clicked' : 'unclicked', clicks: clickCount + 1 }, '3d/interact');\n  }, [send, clickCount]);\n\n  return (\n    <div className=\"h-screen bg-zinc-950 text-zinc-100 flex flex-col\">\n      <Header title=\"fromcubes 3D\" subtitle=\"React Three Fiber + live Node-RED data\" />\n      <div className=\"flex-1 overflow-hidden\">\n        <Canvas style={{ width: '100%', height: '100%' }}>\n          <ambientLight intensity={Math.PI / 2} />\n          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} decay={0} intensity={Math.PI} />\n          <pointLight position={[-10, -10, -10]} decay={0} intensity={Math.PI} />\n          <Box position={[-1.2, 0, 0]} color={colors.leftColor} onToggle={handleToggle} />\n          <Box position={[1.2, 0, 0]} color={colors.rightColor} onToggle={handleToggle} />\n          <OrbitControls />\n        </Canvas>\n      </div>\n      <StatusBar leftColor={colors.leftColor} rightColor={colors.rightColor} clickCount={clickCount} />\n    </div>\n  );\n}",
     "x": 560,
     "y": 160,
     "wires": [["fc-three-debug"]]

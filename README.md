@@ -78,6 +78,7 @@ Referenced components (with transitive dependencies) are selectively injected at
 - **JSX tag completion** — type tag name, Tab to expand (open+close and self-closing variants)
 - **Self-close collapse** — type `/` inside empty `<tag></tag>` to convert to `<tag />`
 - **Component completion** — registry components + any PascalCase word
+- **Portal Assets sidebar** — file manager for static assets (GLB models, textures, fonts, etc.)
 
 ## Hook API
 
@@ -110,6 +111,20 @@ When **Portal Auth** is checked, the node extracts user identity from incoming r
 - To send a response to a specific tab, keep `msg._client` on the return message (or set `msg._client = { portalClient: "..." }`).
 - To send to all sessions of a user, set `msg._client = { userId: "..." }` (omit `portalClient`).
 - To broadcast to all clients, remove `msg._client` from the message.
+
+## Portal Assets
+
+Static files (3D models, textures, fonts, etc.) can be uploaded and served from a public endpoint.
+
+- Open the **Portal Assets** tab in the Node-RED sidebar
+- Upload files via button or drag & drop
+- Organize in folders (create, rename, move between folders)
+- Copy public path with one click — use in JSX: `/fromcubes/public/models/scene.glb`
+- Download and delete files from the context menu
+
+All uploads require Node-RED admin authentication. Files are served publicly at `/fromcubes/public/`.
+
+Limits: 100 MB per file, 500 MB total, 1000 files max.
 
 ## Deploy lifecycle
 
@@ -159,7 +174,7 @@ Import `001-shared-components-flow.json` first — it provides shared UI compone
 | `003-chart-portal-flow.json` | `chart.js/auto` | Live updating Chart.js charts |
 | `004-d3-poland-flow.json` | `d3` | Interactive SVG map of Poland (simulated data) |
 | `005-threejs-portal-flow.json` | `three` | 3D scene with Three.js |
-| `006-pixi-portal-flow.json` | `pixi.js`, `@pixi/react` | Drag & drop shapes with PixiJS |
+| `006-pixi-portal-flow.json` | `pixi.js`, `@pixi/react` | Clickable bunny sprites with PixiJS |
 | `007-webgpu-tsl-flow.json` | `three` | WebGPU renderer + TSL animated shaders |
 
 ## License

@@ -1458,3 +1458,488 @@ const { data, send, user, portalClient } = useNodeRed();
     indicator</strong> checkbox (off by default).
   </p>
 </script>
+
+<!-- ── Assets sidebar tab ──────────────────────────────────────── -->
+<script type="text/javascript">
+(function () {
+  // Resolve httpNodeRoot for public URL prefix
+  var nodeRoot = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
+  var publicBase = nodeRoot + "/fromcubes/public/";
+
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  var allEntries = [];
+  var collapsed = {};
+
+  var content = $('<div class="red-ui-sidebar-info" style="height:100%;overflow:auto;padding:0;"></div>');
+  var fileList = $('<div style="padding:0;"></div>').appendTo(content);
+
+  // ── Toolbar ──
+  var toolbar = $('<div style="display:flex;align-items:center;gap:4px;"></div>');
+  var fileInput = $('<input type="file" multiple style="display:none;">').appendTo(toolbar);
+  $('<a class="red-ui-sidebar-header-button" href="#"><i class="fa fa-upload"></i> Upload</a>')
+    .on("click", function (e) { e.preventDefault(); fileInput.trigger("click"); })
+    .appendTo(toolbar);
+  $('<a class="red-ui-sidebar-header-button" href="#"><i class="fa fa-folder-open"></i> New folder</a>')
+    .on("click", function (e) { e.preventDefault(); showNewFolderInput(""); })
+    .appendTo(toolbar);
+
+  // ── Helpers ──
+  function pathExists(p) {
+    for (var i = 0; i < allEntries.length; i++) {
+      if (allEntries[i].name === p) return true;
+    }
+    return false;
+  }
+
+  function uploadFiles(files, targetDir) {
+    if (!files || files.length === 0) return;
+    var toUpload = [];
+    var duplicates = [];
+    for (var i = 0; i < files.length; i++) {
+      var uploadPath = targetDir ? targetDir + "/" + files[i].name : files[i].name;
+      if (pathExists(uploadPath)) {
+        duplicates.push({ file: files[i], path: uploadPath });
+      } else {
+        toUpload.push({ file: files[i], path: uploadPath });
+      }
+    }
+    if (duplicates.length > 0) {
+      var names = duplicates.map(function (d) { return d.file.name; }).join(", ");
+      if (confirm("These files already exist: " + names + "\nOverwrite?")) {
+        toUpload = toUpload.concat(duplicates);
+      }
+    }
+    if (toUpload.length === 0) return;
+    var pending = toUpload.length;
+    toUpload.forEach(function (item) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        $.ajax({
+          type: "POST",
+          url: "portal-react/assets/upload/" + item.path.split("/").map(encodeURIComponent).join("/"),
+          data: new Uint8Array(reader.result),
+          contentType: "application/octet-stream",
+          processData: false,
+          success: function () { if (--pending === 0) refreshList(); },
+          error: function () {
+            RED.notify("Upload failed: " + item.file.name, "error");
+            if (--pending === 0) refreshList();
+          },
+        });
+      };
+      reader.readAsArrayBuffer(item.file);
+    });
+  }
+
+  fileInput.on("change", function () {
+    uploadFiles(this.files, "");
+    fileInput.val("");
+  });
+
+  // External file drag & drop on content area (root upload)
+  content.on("dragover", function (e) {
+    if (e.originalEvent.dataTransfer.types.indexOf("Files") >= 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      content.css("background", "rgba(34,211,238,0.05)");
+    }
+  });
+  content.on("dragleave", function (e) {
+    e.preventDefault();
+    content.css("background", "");
+  });
+  content.on("drop", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    content.css("background", "");
+    var dt = e.originalEvent.dataTransfer;
+    if (dt.files && dt.files.length > 0) {
+      uploadFiles(dt.files, "");
+    }
+  });
+
+  function moveItem(fromPath, toDir) {
+    var filename = fromPath.split("/").pop();
+    var newPath = toDir ? toDir + "/" + filename : filename;
+    if (fromPath === newPath) return;
+    if (pathExists(newPath)) {
+      if (!confirm("'" + filename + "' already exists in this folder. Overwrite?")) return;
+    }
+    $.ajax({
+      type: "POST", url: "portal-react/assets/move",
+      contentType: "application/json",
+      data: JSON.stringify({ from: fromPath, to: newPath }),
+      success: function () { refreshList(); },
+      error: function (xhr) {
+        var msg = xhr.responseJSON ? xhr.responseJSON.error : "move failed";
+        RED.notify("Move failed: " + msg, "error");
+      },
+    });
+  }
+
+  // ── Inline new-folder input ──
+  function showNewFolderInput(parentDir) {
+    var existingInput = fileList.find(".fc-new-folder-row");
+    if (existingInput.length) existingInput.remove();
+
+    var depth = parentDir ? parentDir.split("/").length : 0;
+    var indent = 8 + depth * 18;
+    var row = $('<div class="fc-new-folder-row" style="display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid var(--red-ui-secondary-border-color);background:var(--red-ui-tertiary-background);"></div>');
+    row.css("padding-left", indent + "px");
+    $('<i class="fa fa-folder" style="color:#fbbf24;font-size:13px;width:16px;text-align:center;"></i>').appendTo(row);
+    var inp = $('<input type="text" placeholder="folder name" class="red-ui-searchBox-input" style="flex:1;padding:3px 6px;font-size:12px;">');
+    inp.appendTo(row);
+    var okBtn = $('<button class="red-ui-button red-ui-button-small" style="color:var(--red-ui-text-color-success);" title="Create"><i class="fa fa-check"></i></button>');
+    var cancelBtn = $('<button class="red-ui-button red-ui-button-small" title="Cancel"><i class="fa fa-times"></i></button>');
+    function submit() {
+      var name = inp.val().trim();
+      if (!name) { row.remove(); return; }
+      var p = parentDir ? parentDir + "/" + name : name;
+      if (pathExists(p)) {
+        RED.notify("Folder '" + name + "' already exists", "warning");
+        return;
+      }
+      $.ajax({ type: "POST", url: "portal-react/assets/mkdir", contentType: "application/json", data: JSON.stringify({ path: p }),
+        success: function () { row.remove(); refreshList(); },
+        error: function () { RED.notify("Failed to create folder", "error"); },
+      });
+    }
+    okBtn.on("click", function (e) { e.preventDefault(); submit(); });
+    cancelBtn.on("click", function (e) { e.preventDefault(); row.remove(); });
+    inp.on("keydown", function (e) {
+      if (e.key === "Enter") submit();
+      if (e.key === "Escape") row.remove();
+    });
+    okBtn.appendTo(row);
+    cancelBtn.appendTo(row);
+
+    // Insert after the parent folder row, or at top
+    if (parentDir) {
+      var parentRow = fileList.find('[data-path="' + parentDir + '"]');
+      if (parentRow.length) { row.insertAfter(parentRow); } else { fileList.prepend(row); }
+    } else {
+      fileList.prepend(row);
+    }
+    inp.focus();
+  }
+
+  // ── Context menu (native Node-RED style) ──
+  var activeMenu = null;
+  function closeMenu() {
+    if (activeMenu) { activeMenu.remove(); activeMenu = null; }
+  }
+  $(document).on("click", closeMenu);
+
+  function showMenu(anchor, items) {
+    closeMenu();
+    var menu = $('<ul class="red-ui-menu red-ui-menu-dropdown" style="position:absolute;z-index:10000;display:block;"></ul>');
+    items.forEach(function (item) {
+      if (item.divider) {
+        menu.append('<li class="red-ui-menu-divider"></li>');
+        return;
+      }
+      var li = $('<li></li>');
+      var a = $('<a href="#"></a>');
+      if (item.danger) a.css("color", "var(--red-ui-text-color-error)");
+      a.append('<i class="fa ' + item.icon + '" style="width:18px;text-align:center;"></i> ');
+      a.append($('<span class="red-ui-menu-label"></span>').text(item.label));
+      a.on("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenu();
+        item.action();
+      });
+      li.append(a);
+      menu.append(li);
+    });
+
+    $("body").append(menu);
+    activeMenu = menu;
+
+    // Position near the anchor
+    var off = anchor.offset();
+    var top = off.top + anchor.outerHeight() + 2;
+    var left = off.left - menu.outerWidth() + anchor.outerWidth();
+    if (left < 0) left = off.left;
+    if (top + menu.outerHeight() > $(window).height()) top = off.top - menu.outerHeight() - 2;
+    menu.css({ top: top, left: left });
+  }
+
+  var adminRoot = (RED.settings.httpAdminRoot || "/").replace(/\/$/, "");
+
+  function showRenameInput(rowEl, fullPath, currentName) {
+    var nameSpan = rowEl.find("span").filter(function () { return $(this).text() === currentName; }).first();
+    if (!nameSpan.length) return;
+    var origText = nameSpan.text();
+    var inp = $('<input type="text" class="red-ui-searchBox-input" style="flex:1;padding:3px 6px;font-size:12px;">').val(origText);
+    var okBtn = $('<button class="red-ui-button red-ui-button-small" style="color:var(--red-ui-text-color-success);" title="Save"><i class="fa fa-check"></i></button>');
+    var cancelBtn = $('<button class="red-ui-button red-ui-button-small" title="Cancel"><i class="fa fa-times"></i></button>');
+    var dotIdx = origText.lastIndexOf(".");
+    var hasExt = dotIdx > 0; // has extension (not hidden file)
+    var origExt = hasExt ? origText.slice(dotIdx) : "";
+
+    nameSpan.replaceWith(inp);
+    inp.after(cancelBtn).after(okBtn);
+    inp.focus();
+    // Select only the name part before extension
+    var el = inp[0];
+    if (hasExt && el.setSelectionRange) {
+      el.setSelectionRange(0, dotIdx);
+    } else {
+      inp.select();
+    }
+
+    function restore() {
+      okBtn.remove();
+      cancelBtn.remove();
+      inp.replaceWith($('<span style="flex:1;font-size:12px;word-break:break-all;"></span>').text(origText));
+    }
+    function submit() {
+      var newName = inp.val().trim();
+      if (!newName) {
+        RED.notify("Name cannot be empty", "warning");
+        return;
+      }
+      // Warn if extension changed or removed
+      if (hasExt) {
+        var newDot = newName.lastIndexOf(".");
+        var newExt = newDot > 0 ? newName.slice(newDot) : "";
+        if (newExt.toLowerCase() !== origExt.toLowerCase()) {
+          if (!confirm("Extension changed from '" + origExt + "' to '" + (newExt || "none") + "'. Continue?")) return;
+        }
+      }
+      if (newName === origText) { restore(); return; }
+      var parentDir = fullPath.indexOf("/") >= 0 ? fullPath.slice(0, fullPath.lastIndexOf("/")) : "";
+      var newPath = parentDir ? parentDir + "/" + newName : newName;
+      if (pathExists(newPath)) {
+        RED.notify("'" + newName + "' already exists", "warning");
+        return;
+      }
+      $.ajax({
+        type: "POST", url: "portal-react/assets/move",
+        contentType: "application/json",
+        data: JSON.stringify({ from: fullPath, to: newPath }),
+        success: function () { refreshList(); },
+        error: function (xhr) {
+          var msg = xhr.responseJSON ? xhr.responseJSON.error : "rename failed";
+          RED.notify("Rename failed: " + msg, "error");
+          restore();
+        },
+      });
+    }
+    okBtn.on("click", function (e) { e.preventDefault(); e.stopPropagation(); submit(); });
+    cancelBtn.on("click", function (e) { e.preventDefault(); e.stopPropagation(); restore(); });
+    inp.on("keydown", function (e) {
+      if (e.key === "Enter") submit();
+      if (e.key === "Escape") restore();
+    });
+  }
+
+  // ── Tree rendering ──
+  function buildTree(entries) {
+    // Build nested structure: { children: { name: { type, children, entry } } }
+    var root = { children: {} };
+    entries.forEach(function (e) {
+      var parts = e.name.split("/");
+      var node = root;
+      for (var i = 0; i < parts.length; i++) {
+        if (!node.children[parts[i]]) {
+          node.children[parts[i]] = { children: {} };
+        }
+        node = node.children[parts[i]];
+      }
+      node.entry = e;
+    });
+    return root;
+  }
+
+  function renderTree() {
+    fileList.empty();
+    if (allEntries.length === 0) {
+      fileList.append($('<div style="padding:16px;color:var(--red-ui-secondary-text-color);text-align:center;">No files uploaded.<br><span style="font-size:11px;">Drop files here or click Upload.</span></div>'));
+      return;
+    }
+    var tree = buildTree(allEntries);
+    renderNode(tree, "", 0);
+  }
+
+  function renderNode(node, parentPath, depth) {
+    // Collect and sort: dirs first, then files
+    var names = Object.keys(node.children).sort(function (a, b) {
+      var aIsDir = node.children[a].entry && node.children[a].entry.type === "dir";
+      var bIsDir = node.children[b].entry && node.children[b].entry.type === "dir";
+      if (aIsDir && !bIsDir) return -1;
+      if (!aIsDir && bIsDir) return 1;
+      return a.localeCompare(b);
+    });
+
+    names.forEach(function (name) {
+      var child = node.children[name];
+      var e = child.entry;
+      if (!e) return;
+      var fullPath = e.name;
+      var indent = 8 + depth * 18;
+      var isDir = e.type === "dir";
+      var isOpen = !collapsed[fullPath];
+
+      var row = $('<div data-path="' + fullPath + '" style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-bottom:1px solid var(--red-ui-secondary-border-color);"></div>');
+      row.css("padding-left", indent + "px");
+
+      if (isDir) {
+        // Expand/collapse arrow
+        var arrow = $('<i class="fa ' + (isOpen ? 'fa-caret-down' : 'fa-caret-right') + '" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:10px;text-align:center;cursor:pointer;"></i>');
+        arrow.on("click", function (e) {
+          e.stopPropagation();
+          collapsed[fullPath] = isOpen;
+          renderTree();
+        });
+        row.append(arrow);
+        $('<i class="fa ' + (isOpen ? 'fa-folder-open' : 'fa-folder') + '" style="color:#fbbf24;font-size:12px;width:16px;text-align:center;"></i>').appendTo(row);
+        $('<span style="flex:1;font-size:12px;cursor:pointer;"></span>').text(name)
+          .on("click", function () { collapsed[fullPath] = isOpen; renderTree(); })
+          .appendTo(row);
+
+        // Context menu trigger
+        var dirMenuBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;"><i class="fa fa-ellipsis-v"></i></button>');
+        (function (fp, nm) {
+          dirMenuBtn.on("click", function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            showMenu(dirMenuBtn, [
+              { icon: "fa-pencil", label: "Rename", action: function () {
+                showRenameInput(row, fp, nm);
+              }},
+              { icon: "fa-plus", label: "New subfolder", action: function () {
+                if (collapsed[fp]) { collapsed[fp] = false; renderTree(); }
+                setTimeout(function () { showNewFolderInput(fp); }, 50);
+              }},
+              { divider: true },
+              { icon: "fa-trash", label: "Delete folder", danger: true, action: function () {
+                if (!confirm("Delete folder '" + nm + "' and all contents?")) return;
+                $.ajax({
+                  type: "DELETE",
+                  url: "portal-react/assets/" + fp.split("/").map(encodeURIComponent).join("/"),
+                  success: function () { refreshList(); },
+                  error: function () { RED.notify("Delete failed", "error"); },
+                });
+              }},
+            ]);
+          });
+        })(fullPath, name);
+        dirMenuBtn.appendTo(row);
+
+        // Drop target
+        row.on("dragover", function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          row.css("background", "rgba(251,191,36,0.08)");
+        });
+        row.on("dragleave", function () { row.css("background", ""); });
+        row.on("drop", function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          row.css("background", "");
+          var srcPath = ev.originalEvent.dataTransfer.getData("text/x-asset-path");
+          if (srcPath) {
+            moveItem(srcPath, fullPath);
+          } else if (ev.originalEvent.dataTransfer.files && ev.originalEvent.dataTransfer.files.length > 0) {
+            uploadFiles(ev.originalEvent.dataTransfer.files, fullPath);
+          }
+        });
+        fileList.append(row);
+
+        // Render children if open
+        if (isOpen) {
+          renderNode(child, fullPath, depth + 1);
+        }
+      } else {
+        // File
+        row.attr("draggable", "true").css("cursor", "grab");
+        $('<span style="width:10px;"></span>').appendTo(row); // spacer for arrow alignment
+        $('<i class="fa fa-file-o" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:16px;text-align:center;"></i>').appendTo(row);
+        $('<span style="flex:1;font-size:12px;word-break:break-all;"></span>').text(name).appendTo(row);
+        $('<span style="font-size:10px;color:var(--red-ui-tertiary-text-color);white-space:nowrap;"></span>').text(formatSize(e.size)).appendTo(row);
+
+        row.on("dragstart", function (ev) {
+          ev.originalEvent.dataTransfer.setData("text/x-asset-path", fullPath);
+          ev.originalEvent.dataTransfer.effectAllowed = "move";
+          row.css("opacity", "0.4");
+        });
+        row.on("dragend", function () { row.css("opacity", "1"); });
+
+        var copyBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;" title="Copy public path"><i class="fa fa-clipboard"></i></button>');
+        var fileMenuBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;"><i class="fa fa-ellipsis-v"></i></button>');
+        (function (fp, nm) {
+          copyBtn.on("click", function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            var url = publicBase + fp;
+            navigator.clipboard.writeText(url).then(function () {
+              RED.notify("Copied: " + url, { type: "success", timeout: 2000 });
+            });
+          });
+          fileMenuBtn.on("click", function (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            showMenu(fileMenuBtn, [
+              { icon: "fa-pencil", label: "Rename", action: function () {
+                showRenameInput(row, fp, nm);
+              }},
+              { icon: "fa-download", label: "Download", action: function () {
+                var a = document.createElement("a");
+                a.href = adminRoot + "/portal-react/assets/download/" + fp.split("/").map(encodeURIComponent).join("/");
+                a.download = nm;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+              }},
+              { divider: true },
+              { icon: "fa-trash", label: "Delete", danger: true, action: function () {
+                $.ajax({
+                  type: "DELETE",
+                  url: "portal-react/assets/" + fp.split("/").map(encodeURIComponent).join("/"),
+                  success: function () { refreshList(); },
+                  error: function () { RED.notify("Delete failed: " + nm, "error"); },
+                });
+              }},
+            ]);
+          });
+        })(fullPath, name);
+        copyBtn.appendTo(row);
+        fileMenuBtn.appendTo(row);
+        fileList.append(row);
+      }
+    });
+  }
+
+  function refreshList() {
+    $.getJSON("portal-react/assets", function (entries) {
+      allEntries = entries || [];
+      renderTree();
+    });
+  }
+
+  RED.sidebar.addTab({
+    id: "fromcubes-public",
+    label: "Portal Assets",
+    name: "fromcubes portal assets",
+    iconClass: "fa fa-desktop",
+    content: content[0],
+    toolbar: toolbar[0],
+    pinned: false,
+    enableOnEdit: true,
+  });
+
+  RED.actions.add("fromcubes:show-assets", function () {
+    RED.sidebar.show("fromcubes-public");
+  });
+
+  RED.events.on("sidebar:resize", function () { refreshList(); });
+  setTimeout(refreshList, 1000);
+})();
+</script>
