@@ -107,6 +107,63 @@ module.exports = function (RED) {
     } catch (_) {}
   });
 
+  // ── Disk cache for JS bundles and CSS ────────────────────────
+  const cacheDir = path.join(userDir, "fromcubes", "cache");
+  fs.mkdirSync(cacheDir, { recursive: true });
+
+  function readCachedJS(jsxHash) {
+    try {
+      const js = fs.readFileSync(path.join(cacheDir, jsxHash + ".js"), "utf8");
+      let metafile = null;
+      try { metafile = JSON.parse(fs.readFileSync(path.join(cacheDir, jsxHash + ".meta.json"), "utf8")); } catch (_) {}
+      return { js, metafile, error: null };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeCachedJS(jsxHash, js, metafile) {
+    try {
+      fs.writeFileSync(path.join(cacheDir, jsxHash + ".js"), js, "utf8");
+      if (metafile) {
+        fs.writeFileSync(path.join(cacheDir, jsxHash + ".meta.json"), JSON.stringify(metafile), "utf8");
+      }
+    } catch (e) {
+      RED.log.warn("[portal-react] cache write failed: " + e.message);
+    }
+  }
+
+  function readCachedCSS(jsxHash) {
+    try {
+      const css = fs.readFileSync(path.join(cacheDir, jsxHash + ".css"), "utf8");
+      return { css, cssHash: jsxHash };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeCachedCSS(jsxHash, css) {
+    try {
+      fs.writeFileSync(path.join(cacheDir, jsxHash + ".css"), css, "utf8");
+    } catch (e) {
+      RED.log.warn("[portal-react] CSS cache write failed: " + e.message);
+    }
+  }
+
+  function deleteCacheFiles(jsxHash) {
+    if (!jsxHash) return;
+    for (const ext of [".js", ".css", ".meta.json"]) {
+      try { fs.unlinkSync(path.join(cacheDir, jsxHash + ext)); } catch (_) {}
+    }
+  }
+
+  function isHashInUse(jsxHash, pageState, excludeEndpoint) {
+    for (const ep in pageState) {
+      if (ep !== excludeEndpoint && pageState[ep]?.jsxHash === jsxHash) return true;
+    }
+    return false;
+  }
+
   function transpile(jsx) {
     try {
       const buildResult = esbuild.buildSync({
@@ -149,5 +206,12 @@ module.exports = function (RED) {
     escScript,
     pkgRoot,
     userDir,
+    cacheDir,
+    readCachedJS,
+    writeCachedJS,
+    readCachedCSS,
+    writeCachedCSS,
+    deleteCacheFiles,
+    isHashInUse,
   };
 };

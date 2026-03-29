@@ -45,6 +45,12 @@ module.exports = function (RED) {
   }
   const rebuildCallbacks = RED.settings.fcRebuildCallbacks;
 
+  // Track endpoint ownership: { endpoint: nodeId } — prevents duplicate endpoints
+  if (!RED.settings.fcEndpointOwners) {
+    RED.settings.fcEndpointOwners = {};
+  }
+  const endpointOwners = RED.settings.fcEndpointOwners;
+
   // Debounced rebuild-all: coalesces multiple component registrations into one rebuild pass
   let _rebuildTimer = null;
   function scheduleRebuildAll() {
@@ -57,7 +63,8 @@ module.exports = function (RED) {
 
   // ── Load modules ─────────────────────────────────────────────
   const helpers = require("./lib/helpers")(RED);
-  const { hash, transpile, generateCSS, extractPortalUser, removeRoute, isSafeName, userDir } = helpers;
+  const { hash, transpile, generateCSS, extractPortalUser, removeRoute, isSafeName, userDir,
+          readCachedJS, writeCachedJS, readCachedCSS, writeCachedCSS, deleteCacheFiles, isHashInUse } = helpers;
   const { buildPage, buildErrorPage } = require("./lib/page-builder");
 
   // ── Canvas node: shared component ─────────────────────────────
@@ -117,11 +124,22 @@ module.exports = function (RED) {
     const showWsStatus = config.showWsStatus === true;
     const libs = config.libs || [];
 
+    // ── Duplicate endpoint check ──
+    const existingOwner = endpointOwners[endpoint];
+    if (existingOwner && existingOwner !== nodeId) {
+      node.error(`Endpoint "${endpoint}" is already used by another portal node`);
+      node.status({ fill: "red", shape: "ring", text: "duplicate: " + endpoint });
+      node.on("close", function (_removed, done) { if (done) done(); });
+      return;
+    }
+    endpointOwners[endpoint] = nodeId;
+
     // State
     const clients = new Map(); // portalId → ws
     let lastPayload = null;
     let wsServer = null;
     let isClosing = false;
+    let lastJsxHash = null;
 
     if (libs.length > 0) {
       node.status({ fill: "blue", shape: "ring", text: "loading libs..." });
@@ -239,7 +257,19 @@ module.exports = function (RED) {
         "createRoot(document.getElementById('root')).render(React.createElement(App));",
       ].join("\n");
 
-      const compiled = transpile(fullJsx);
+      const jsxHash = hash(fullJsx);
+      const prevState = pageState[endpoint];
+      const prevHash = prevState?.jsxHash;
+
+      // ── JS: disk cache → transpile ──
+      let compiled = readCachedJS(jsxHash);
+      let cacheHit = !!compiled;
+      if (!compiled) {
+        compiled = transpile(fullJsx);
+        if (!compiled.error) {
+          writeCachedJS(jsxHash, compiled.js, compiled.metafile);
+        }
+      }
 
       if (compiled.error) {
         node.error("JSX transpile error: " + compiled.error);
@@ -255,23 +285,36 @@ module.exports = function (RED) {
                 .slice(0, 5)
             : [];
           const totalKB = (compiled.js.length / 1024).toFixed(1);
-          node.log(`Bundle: ${totalKB}KB — top: ${sizes.map((s) => `${s.name} (${(s.bytes / 1024).toFixed(1)}KB)`).join(", ")}`);
+          node.log(`Bundle${cacheHit ? " (cached)" : ""}: ${totalKB}KB — top: ${sizes.map((s) => `${s.name} (${(s.bytes / 1024).toFixed(1)}KB)`).join(", ")}`);
         }
       }
 
       const contentHash = compiled.js ? hash(compiled.js) : "";
-      const prevState = pageState[endpoint];
-      const jsxHash = hash(fullJsx);
 
+      // ── CSS: disk cache → in-memory → generate ──
       const cssReady = !compiled.error
-        ? (prevState?.jsxHash === jsxHash && prevState?.css
-            ? Promise.resolve({ css: prevState.css, cssHash: prevState.cssHash })
-            : generateCSS(fullJsx))
-          .catch((err) => {
+        ? (() => {
+            const cachedCSS = readCachedCSS(jsxHash);
+            if (cachedCSS) return Promise.resolve(cachedCSS);
+            if (prevState?.jsxHash === jsxHash && prevState?.css) {
+              return Promise.resolve({ css: prevState.css, cssHash: prevState.cssHash });
+            }
+            return generateCSS(fullJsx).then(({ css, cssHash }) => {
+              writeCachedCSS(jsxHash, css);
+              return { css, cssHash };
+            });
+          })().catch((err) => {
             node.warn("Tailwind CSS generation failed: " + err.message);
             return { css: "", cssHash: "" };
           })
         : Promise.resolve({ css: "", cssHash: "" });
+
+      // ── Stale cache cleanup ──
+      if (prevHash && prevHash !== jsxHash && !isHashInUse(prevHash, pageState, endpoint)) {
+        deleteCacheFiles(prevHash);
+      }
+
+      lastJsxHash = jsxHash;
 
       pageState[endpoint] = {
         compiled,
@@ -496,8 +539,17 @@ module.exports = function (RED) {
         // Unregister rebuild callback
         delete rebuildCallbacks[nodeId];
 
+        // Release endpoint ownership
+        if (endpointOwners[endpoint] === nodeId) {
+          delete endpointOwners[endpoint];
+        }
+
         // Clean up route only when node is fully removed (not redeployed)
         if (removed) {
+          // Delete disk cache if no other endpoint uses this hash
+          if (lastJsxHash && !isHashInUse(lastJsxHash, pageState, endpoint)) {
+            deleteCacheFiles(lastJsxHash);
+          }
           delete pageState[endpoint];
           removeRoute(RED.httpNode._router, endpoint);
           delete registeredRoutes[endpoint];
@@ -573,7 +625,7 @@ module.exports = function (RED) {
 
   // ── Public assets folder ─────────────────────────────────────
   const { registerAssets } = require("./lib/assets");
-  registerAssets(RED, express, path.join(userDir, "fromcubes-public"));
+  registerAssets(RED, express, path.join(userDir, "fromcubes", "public"));
 
   // ── Admin API for component registry ──────────────────────────
 
