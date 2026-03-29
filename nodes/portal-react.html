@@ -1479,12 +1479,12 @@ const { data, send, user, portalClient } = useNodeRed();
   var fileList = $('<div style="padding:0;"></div>').appendTo(content);
 
   // ── Toolbar ──
-  var toolbar = $('<div style="display:flex;align-items:center;gap:4px;"></div>');
+  var toolbar = $('<div style="display:flex;align-items:center;gap:4px;padding-right:4px;"></div>');
   var fileInput = $('<input type="file" multiple style="display:none;">').appendTo(toolbar);
-  $('<a class="red-ui-sidebar-header-button" href="#"><i class="fa fa-upload"></i> Upload</a>')
+  $('<a class="red-ui-sidebar-header-button" href="#" style="flex-shrink:0;"><i class="fa fa-upload"></i> Upload</a>')
     .on("click", function (e) { e.preventDefault(); fileInput.trigger("click"); })
     .appendTo(toolbar);
-  $('<a class="red-ui-sidebar-header-button" href="#"><i class="fa fa-folder-open"></i> New folder</a>')
+  $('<a class="red-ui-sidebar-header-button" href="#" style="flex-shrink:0;"><i class="fa fa-folder-open"></i> New folder</a>')
     .on("click", function (e) { e.preventDefault(); showNewFolderInput(""); })
     .appendTo(toolbar);
 
@@ -1770,7 +1770,7 @@ const { data, send, user, portalClient } = useNodeRed();
     rootArrow.on("click", function () { collapsed[ROOT_KEY] = isOpen; renderTree(); });
     rootRow.append(rootArrow);
     $('<i class="fa ' + (isOpen ? 'fa-folder-open' : 'fa-folder') + '" style="color:#fbbf24;font-size:12px;width:16px;text-align:center;"></i>').appendTo(rootRow);
-    $('<span style="flex:1;font-size:12px;cursor:pointer;opacity:0.8;"></span>').text(publicBase.replace(/\/$/, ""))
+    $('<span style="flex:1;font-size:12px;cursor:pointer;opacity:0.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>').text(publicBase.replace(/\/$/, ""))
       .on("click", function () { collapsed[ROOT_KEY] = isOpen; renderTree(); })
       .appendTo(rootRow);
     fileList.append(rootRow);
@@ -1817,7 +1817,7 @@ const { data, send, user, portalClient } = useNodeRed();
         });
         row.append(arrow);
         $('<i class="fa ' + (isOpen ? 'fa-folder-open' : 'fa-folder') + '" style="color:#fbbf24;font-size:12px;width:16px;text-align:center;"></i>').appendTo(row);
-        $('<span style="flex:1;font-size:12px;cursor:pointer;"></span>').text(name)
+        $('<span style="flex:1;font-size:12px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fullPath + '"></span>').text(name)
           .on("click", function () { collapsed[fullPath] = isOpen; renderTree(); })
           .appendTo(row);
 
@@ -1879,7 +1879,7 @@ const { data, send, user, portalClient } = useNodeRed();
         row.attr("draggable", "true").css("cursor", "grab");
         $('<span style="width:10px;"></span>').appendTo(row); // spacer for arrow alignment
         $('<i class="fa fa-file-o" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:16px;text-align:center;"></i>').appendTo(row);
-        $('<span style="flex:1;font-size:12px;word-break:break-all;"></span>').text(name).appendTo(row);
+        $('<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + fullPath + '"></span>').text(name).appendTo(row);
         $('<span style="font-size:10px;color:var(--red-ui-tertiary-text-color);white-space:nowrap;"></span>').text(formatSize(e.size)).appendTo(row);
 
         row.on("dragstart", function (ev) {
