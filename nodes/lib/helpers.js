@@ -1,0 +1,153 @@
+/**
+ * Shared helper functions for portal-react.
+ */
+
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const esbuild = require("esbuild");
+
+function hash(str) {
+  return crypto.createHash("sha256").update(str).digest("hex").slice(0, 16);
+}
+
+const twCompile = require("tailwindcss").compile;
+const CANDIDATE_RE = /[a-zA-Z0-9_\-:.\/\[\]#%]+/g;
+
+let twCompiled = null;
+async function getTwCompiled() {
+  if (twCompiled) return twCompiled;
+  twCompiled = await twCompile(`@import 'tailwindcss';`, {
+    loadStylesheet: async (id, base) => {
+      let resolved;
+      if (id === "tailwindcss") {
+        resolved = require.resolve("tailwindcss/index.css");
+      } else {
+        resolved = require.resolve(id, { paths: [base || __dirname] });
+      }
+      return {
+        content: fs.readFileSync(resolved, "utf8"),
+        base: path.dirname(resolved),
+      };
+    },
+  });
+  return twCompiled;
+}
+
+async function generateCSS(source) {
+  const cssHash = hash(source);
+  const compiled = await getTwCompiled();
+  const candidates = [...new Set(source.match(CANDIDATE_RE) || [])];
+  const css = compiled.build(candidates);
+  return { css, cssHash };
+}
+
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+function isSafeName(name) {
+  return (
+    typeof name === "string" && name.length > 0 && !FORBIDDEN_KEYS.has(name)
+  );
+}
+
+function extractPortalUser(headers) {
+  const user = {};
+  if (headers["x-portal-user-id"]) user.userId = headers["x-portal-user-id"];
+  if (headers["x-portal-user-name"])
+    user.userName = headers["x-portal-user-name"];
+  if (headers["x-portal-user-username"])
+    user.username = headers["x-portal-user-username"];
+  if (headers["x-portal-user-email"])
+    user.email = headers["x-portal-user-email"];
+  if (headers["x-portal-user-role"])
+    user.role = headers["x-portal-user-role"];
+  if (headers["x-portal-user-groups"]) {
+    try {
+      user.groups = JSON.parse(headers["x-portal-user-groups"]);
+    } catch (_) {
+      user.groups = headers["x-portal-user-groups"];
+    }
+  }
+  return Object.keys(user).length > 0 ? user : null;
+}
+
+function removeRoute(router, path) {
+  if (!router || !router.stack) return;
+  router.stack = router.stack.filter(
+    (layer) => !(layer.route && layer.route.path === path),
+  );
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function escScript(s) {
+  return String(s).replace(/<\/(script)/gi, "<\\/$1");
+}
+
+module.exports = function (RED) {
+  // Package root — where react/react-dom live (this package's own node_modules)
+  const pkgRoot = path.join(__dirname, "../..");
+  // userDir — where dynamicModuleList installs user packages
+  const userDir = RED.settings.userDir || path.join(__dirname, "../../../..");
+
+  // Skip npm install for packages already present in node_modules (offline/Docker)
+  RED.hooks.add("preInstall.fcPortal", (event) => {
+    try {
+      const modDir = path.join(event.dir, "node_modules", event.module);
+      if (fs.existsSync(modDir)) {
+        RED.log.info(`[portal-react] ${event.module} already in node_modules, skipping install`);
+        return false;
+      }
+    } catch (_) {}
+  });
+
+  function transpile(jsx) {
+    try {
+      const buildResult = esbuild.buildSync({
+        stdin: {
+          contents: jsx,
+          resolveDir: pkgRoot,
+          loader: "jsx",
+        },
+        bundle: true,
+        format: "iife",
+        minify: true,
+        write: false,
+        target: ["es2020"],
+        jsx: "transform",
+        jsxFactory: "React.createElement",
+        jsxFragment: "React.Fragment",
+        define: { "process.env.NODE_ENV": '"production"' },
+        metafile: true,
+        logOverride: { "import-is-undefined": "silent" },
+        nodePaths: [path.join(userDir, "node_modules")],
+        alias: {
+          "react": path.dirname(require.resolve("react/package.json", { paths: [pkgRoot] })),
+          "react-dom": path.dirname(require.resolve("react-dom/package.json", { paths: [pkgRoot] })),
+        },
+      });
+      return { js: buildResult.outputFiles[0].text, metafile: buildResult.metafile, error: null };
+    } catch (e) {
+      return { js: null, error: e.message };
+    }
+  }
+
+  return {
+    hash,
+    transpile,
+    generateCSS,
+    extractPortalUser,
+    removeRoute,
+    isSafeName,
+    esc,
+    escScript,
+    pkgRoot,
+    userDir,
+  };
+};
