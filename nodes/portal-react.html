@@ -1479,12 +1479,12 @@ const { data, send, user, portalClient } = useNodeRed();
   var fileList = $('<div style="padding:0;"></div>').appendTo(content);
 
   // ── Toolbar ──
-  var toolbar = $('<div style="display:flex;align-items:center;gap:4px;padding-right:4px;"></div>');
+  var toolbar = $('<div style="display:flex;align-items:center;gap:6px;margin:0 6px;padding:2px 0 0;"></div>');
   var fileInput = $('<input type="file" multiple style="display:none;">').appendTo(toolbar);
-  $('<a class="red-ui-sidebar-header-button" href="#" style="flex-shrink:0;"><i class="fa fa-upload"></i> Upload</a>')
+  $('<button class="red-ui-button red-ui-button-small" style="flex-shrink:0;"><i class="fa fa-upload"></i> Upload</button>')
     .on("click", function (e) { e.preventDefault(); fileInput.trigger("click"); })
     .appendTo(toolbar);
-  $('<a class="red-ui-sidebar-header-button" href="#" style="flex-shrink:0;"><i class="fa fa-folder-open"></i> New folder</a>')
+  $('<button class="red-ui-button red-ui-button-small" style="flex-shrink:0;"><i class="fa fa-folder-open"></i> New folder</button>')
     .on("click", function (e) { e.preventDefault(); showNewFolderInput(""); })
     .appendTo(toolbar);
 
