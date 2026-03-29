@@ -58,19 +58,41 @@ module.exports = function (RED) {
   const compNameOwners = RED.settings.fcCompNameOwners;
 
   // Debounced rebuild-all: coalesces multiple component registrations into one rebuild pass
+  // Yields event loop between builds so HTTP server stays responsive
   let _rebuildTimer = null;
   function scheduleRebuildAll() {
     if (_rebuildTimer) clearTimeout(_rebuildTimer);
     _rebuildTimer = setTimeout(() => {
       _rebuildTimer = null;
-      Object.values(rebuildCallbacks).forEach((fn) => fn());
+      const fns = Object.values(rebuildCallbacks);
+      let i = 0;
+      function next() {
+        if (i >= fns.length) return;
+        try { fns[i](); } catch (e) { RED.log.error("[portal-react] rebuild failed: " + e.message); }
+        i++;
+        if (i < fns.length) setImmediate(next);
+      }
+      next();
     }, 50);
   }
 
   // ── Load modules ─────────────────────────────────────────────
   const helpers = require("./lib/helpers")(RED);
-  const { hash, transpile, generateCSS, extractPortalUser, removeRoute, isSafeName, userDir,
-          readCachedJS, writeCachedJS, readCachedCSS, writeCachedCSS, deleteCacheFiles, isHashInUse } = helpers;
+  const {
+    hash,
+    transpile,
+    generateCSS,
+    extractPortalUser,
+    removeRoute,
+    isSafeName,
+    userDir,
+    readCachedJS,
+    writeCachedJS,
+    readCachedCSS,
+    writeCachedCSS,
+    deleteCacheFiles,
+    isHashInUse,
+  } = helpers;
   const { buildPage, buildErrorPage } = require("./lib/page-builder");
 
   // ── Canvas node: shared component ─────────────────────────────
@@ -89,9 +111,17 @@ module.exports = function (RED) {
     // Duplicate component name check
     const existingOwner = compNameOwners[compName];
     if (existingOwner && existingOwner !== node.id) {
-      node.error(`Component name "${compName}" is already used by another node`);
-      node.status({ fill: "red", shape: "ring", text: "duplicate: " + compName });
-      node.on("close", function (_removed, done) { if (done) done(); });
+      node.error(
+        `Component name "${compName}" is already used by another node`,
+      );
+      node.status({
+        fill: "red",
+        shape: "ring",
+        text: "duplicate: " + compName,
+      });
+      node.on("close", function (_removed, done) {
+        if (done) done();
+      });
       return;
     }
     compNameOwners[compName] = node.id;
@@ -134,9 +164,17 @@ module.exports = function (RED) {
     // ── Duplicate endpoint check ──
     const existingOwner = endpointOwners[endpoint];
     if (existingOwner && existingOwner !== nodeId) {
-      node.error(`Endpoint "${endpoint}" is already used by another portal node`);
-      node.status({ fill: "red", shape: "ring", text: "duplicate: " + endpoint });
-      node.on("close", function (_removed, done) { if (done) done(); });
+      node.error(
+        `Endpoint "${endpoint}" is already used by another portal node`,
+      );
+      node.status({
+        fill: "red",
+        shape: "ring",
+        text: "duplicate: " + endpoint,
+      });
+      node.on("close", function (_removed, done) {
+        if (done) done();
+      });
       return;
     }
     endpointOwners[endpoint] = nodeId;
@@ -159,192 +197,273 @@ module.exports = function (RED) {
     // ── Rebuild: transpile JSX + update page state ────────────
 
     function rebuild() {
-      node.status({ fill: "yellow", shape: "dot", text: "building..." });
+      try {
+        node.status({ fill: "yellow", shape: "dot", text: "building..." });
 
-      // Selective injection: only include components referenced in user code (+ transitive deps)
-      const allEntries = Object.entries(registry);
-      const needed = new Set();
+        // ── Pre-build: clear cache, set building state, notify browsers ──
+        const prevState = pageState[endpoint];
+        const prevHash = prevState?.jsxHash;
+        if (prevHash && !isHashInUse(prevHash, pageState, endpoint)) {
+          deleteCacheFiles(prevHash);
+        }
+        pageState[endpoint] = { building: true, wsPath, pageTitle };
+        clients.forEach((ws) => {
+          try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "building" })); } catch (_) {}
+        });
 
-      function addWithDeps(name) {
-        if (needed.has(name)) return;
-        const entry = registry[name];
-        if (!entry) return;
-        needed.add(name);
-        for (const [other] of allEntries) {
-          if (other !== name && entry.code.includes(other)) {
-            addWithDeps(other);
+        // Selective injection: only include components referenced in user code (+ transitive deps)
+        const allEntries = Object.entries(registry);
+        const needed = new Set();
+
+        function addWithDeps(name) {
+          if (needed.has(name)) return;
+          const entry = registry[name];
+          if (!entry) return;
+          needed.add(name);
+          for (const [other] of allEntries) {
+            if (other !== name && entry.code.includes(other)) {
+              addWithDeps(other);
+            }
           }
         }
-      }
 
-      for (const [name] of allEntries) {
-        if (componentCode.includes(name)) {
-          addWithDeps(name);
+        for (const [name] of allEntries) {
+          if (componentCode.includes(name)) {
+            addWithDeps(name);
+          }
         }
-      }
 
-      // Topological sort only needed components
-      const entries = allEntries.filter(([n]) => needed.has(n));
-      entries.sort((a, b) => {
-        const aUsesB = a[1].code.includes(b[0]);
-        const bUsesA = b[1].code.includes(a[0]);
-        if (aUsesB && !bUsesA) return 1; // a depends on b → b first
-        if (bUsesA && !aUsesB) return -1; // b depends on a → a first
-        return 0;
-      });
-      const libraryJsx = entries
-        .map(
-          ([name, c]) =>
-            `// Library: ${name}\nconst ${name} = (() => {\n${c.code}\nreturn ${name};\n})();`,
-        )
-        .join("\n\n");
+        // Topological sort only needed components
+        const entries = allEntries.filter(([n]) => needed.has(n));
+        entries.sort((a, b) => {
+          const aUsesB = a[1].code.includes(b[0]);
+          const bUsesA = b[1].code.includes(a[0]);
+          if (aUsesB && !bUsesA) return 1; // a depends on b → b first
+          if (bUsesA && !aUsesB) return -1; // b depends on a → a first
+          return 0;
+        });
+        const libraryJsx = entries
+          .map(
+            ([name, c]) =>
+              `// Library: ${name}\nconst ${name} = (() => {\n${c.code}\nreturn ${name};\n})();`,
+          )
+          .join("\n\n");
 
-      // Extract import statements from library/user code so they appear at top level
-      const importRe = /^import\s+.+?from\s+['"].+?['"];?\s*$/gm;
-      const libImports = libraryJsx.match(importRe) || [];
-      const userImports = componentCode.match(importRe) || [];
-      const cleanLibJsx = libraryJsx.replace(importRe, "").trim();
-      const cleanCompCode = componentCode.replace(importRe, "").trim();
+        // Extract import statements from library/user code so they appear at top level
+        const importRe = /^import\s+.+?from\s+['"].+?['"];?\s*$/gm;
+        const libImports = libraryJsx.match(importRe) || [];
+        const userImports = componentCode.match(importRe) || [];
+        const cleanLibJsx = libraryJsx.replace(importRe, "").trim();
+        const cleanCompCode = componentCode.replace(importRe, "").trim();
 
-      // Warn about import * (prevents tree-shaking)
-      const starRe = /^import\s+\*\s+as\s+(\w+)\s+from\s+['"](.+?)['"];?\s*$/;
-      const allCode = cleanLibJsx + "\n" + cleanCompCode;
-      for (const imp of [...libImports, ...userImports]) {
-        const m = imp.match(starRe);
-        if (!m) continue;
-        const [, localName, modulePath] = m;
-        const propRe = new RegExp(`\\b${localName}\\s*\\??\\s*\\.\\s*(\\w+)`, "g");
-        const props = new Set();
-        let pm;
-        while ((pm = propRe.exec(allCode)) !== null) props.add(pm[1]);
-        if (props.size > 0) {
-          const named = [...props].sort().join(", ");
-          node.warn(
-            `"import * as ${localName}" bundles entire ${modulePath} library. ` +
-            `For smaller builds use: import { ${named} } from '${modulePath}'`,
+        // Warn about import * (prevents tree-shaking)
+        const starRe = /^import\s+\*\s+as\s+(\w+)\s+from\s+['"](.+?)['"];?\s*$/;
+        const allCode = cleanLibJsx + "\n" + cleanCompCode;
+        for (const imp of [...libImports, ...userImports]) {
+          const m = imp.match(starRe);
+          if (!m) continue;
+          const [, localName, modulePath] = m;
+          const propRe = new RegExp(
+            `\\b${localName}\\s*\\??\\s*\\.\\s*(\\w+)`,
+            "g",
           );
+          const props = new Set();
+          let pm;
+          while ((pm = propRe.exec(allCode)) !== null) props.add(pm[1]);
+          if (props.size > 0) {
+            const named = [...props].sort().join(", ");
+            node.warn(
+              `"import * as ${localName}" bundles entire ${modulePath} library. ` +
+                `For smaller builds use: import { ${named} } from '${modulePath}'`,
+            );
+          }
         }
-      }
 
-      const fullJsx = [
-        "// ── Imports ──",
-        'import React from "react";',
-        'import ReactDOM from "react-dom";',
-        'import { createRoot } from "react-dom/client";',
-        ...libImports,
-        ...userImports,
-        "",
-        "// ── React shorthand ──",
-        "Object.keys(React).filter(k => /^use[A-Z]/.test(k)).forEach(k => { window[k] = React[k]; });",
-        "const { createContext, memo, forwardRef, Fragment } = React;",
-        "",
-        "// ── useNodeRed hook ──",
-        [
-          "function useNodeRed() {",
-          "  const [data, setData] = React.useState(window.__NR._lastData);",
-          "  React.useEffect(() => {",
-          "    return window.__NR.subscribe(setData);",
-          "  }, []);",
-          "  const send = React.useCallback((payload, topic) => {",
-          "    window.__NR.send(payload, topic);",
-          "  }, []);",
-          "  const user = window.__NR._user || null;",
-          "  const portalClient = window.__NR._portalClient;",
-          "  return { data, send, user, portalClient };",
-          "}",
-        ].join("\n"),
-        "",
-        "// ── Library components ──",
-        cleanLibJsx,
-        "",
-        "// ── View component ──",
-        cleanCompCode,
-        "",
-        "// ── Mount ──",
-        "createRoot(document.getElementById('root')).render(React.createElement(App));",
-      ].join("\n");
+        const fullJsx = [
+          "// ── Imports ──",
+          'import React from "react";',
+          'import ReactDOM from "react-dom";',
+          'import { createRoot } from "react-dom/client";',
+          ...libImports,
+          ...userImports,
+          "",
+          "// ── React shorthand ──",
+          "Object.keys(React).filter(k => /^use[A-Z]/.test(k)).forEach(k => { window[k] = React[k]; });",
+          "const { createContext, memo, forwardRef, Fragment } = React;",
+          "",
+          "// ── useNodeRed hook ──",
+          [
+            "function useNodeRed() {",
+            "  const [data, setData] = React.useState(window.__NR._lastData);",
+            "  React.useEffect(() => {",
+            "    return window.__NR.subscribe(setData);",
+            "  }, []);",
+            "  const send = React.useCallback((payload, topic) => {",
+            "    window.__NR.send(payload, topic);",
+            "  }, []);",
+            "  const user = window.__NR._user || null;",
+            "  const portalClient = window.__NR._portalClient;",
+            "  return { data, send, user, portalClient };",
+            "}",
+          ].join("\n"),
+          "",
+          "// ── Library components ──",
+          cleanLibJsx,
+          "",
+          "// ── View component ──",
+          cleanCompCode,
+          "",
+          "// ── Mount ──",
+          "createRoot(document.getElementById('root')).render(React.createElement(App));",
+        ].join("\n");
 
-      const jsxHash = hash(fullJsx);
-      const prevState = pageState[endpoint];
-      const prevHash = prevState?.jsxHash;
-
-      // ── JS: disk cache → transpile ──
-      let compiled = readCachedJS(jsxHash);
-      let cacheHit = !!compiled;
-      if (!compiled) {
-        compiled = transpile(fullJsx);
-        if (!compiled.error) {
-          writeCachedJS(jsxHash, compiled.js, compiled.metafile);
-        }
-      }
-
-      if (compiled.error) {
-        node.error("JSX transpile error: " + compiled.error);
-        node.status({ fill: "red", shape: "dot", text: "transpile error" });
-      } else {
-        node.status({ fill: "green", shape: "dot", text: `built • ${endpoint}` });
-        if (compiled.metafile) {
-          const output = Object.values(compiled.metafile.outputs)[0];
-          const sizes = output
-            ? Object.entries(output.inputs)
-                .map(([name, info]) => ({ name: name.replace(/^.*node_modules\//, ""), bytes: info.bytesInOutput }))
-                .sort((a, b) => b.bytes - a.bytes)
-                .slice(0, 5)
-            : [];
-          const totalKB = (compiled.js.length / 1024).toFixed(1);
-          node.log(`Bundle${cacheHit ? " (cached)" : ""}: ${totalKB}KB — top: ${sizes.map((s) => `${s.name} (${(s.bytes / 1024).toFixed(1)}KB)`).join(", ")}`);
-        }
-      }
-
-      const contentHash = compiled.js ? hash(compiled.js) : "";
-
-      // ── CSS: disk cache → in-memory → generate ──
-      const cssReady = !compiled.error
-        ? (() => {
-            const cachedCSS = readCachedCSS(jsxHash);
-            if (cachedCSS) return Promise.resolve(cachedCSS);
-            if (prevState?.jsxHash === jsxHash && prevState?.css) {
-              return Promise.resolve({ css: prevState.css, cssHash: prevState.cssHash });
-            }
-            return generateCSS(fullJsx).then(({ css, cssHash }) => {
-              writeCachedCSS(jsxHash, css);
-              return { css, cssHash };
+        // ── Check: missing return in App ──
+        const appFnMatch = cleanCompCode.match(/function\s+App\s*\([^)]*\)\s*\{/);
+        if (appFnMatch) {
+          let depth = 1, i = appFnMatch.index + appFnMatch[0].length;
+          let hasReturn = false;
+          while (i < cleanCompCode.length && depth > 0) {
+            const ch = cleanCompCode[i];
+            if (ch === "{") depth++;
+            else if (ch === "}") depth--;
+            else if (cleanCompCode.slice(i, i + 7) === "return ") hasReturn = true;
+            i++;
+          }
+          if (!hasReturn) {
+            node.error("App component has no return statement");
+            node.status({ fill: "red", shape: "dot", text: "missing return" });
+            const missingReturnError = {
+              js: null,
+              error: "App component has no return statement.\n\nAdd a return with JSX, e.g.:\n\nfunction App() {\n  return <div>Hello</div>\n}",
+            };
+            pageState[endpoint] = {
+              compiled: missingReturnError,
+              contentHash: "",
+              cssReady: Promise.resolve({ css: "", cssHash: "" }),
+              jsxHash: "",
+              css: null,
+              cssHash: "",
+              pageTitle,
+              wsPath,
+              customHead,
+              portalAuth,
+              showWsStatus,
+            };
+            clients.forEach((ws) => {
+              try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: missingReturnError.error })); } catch (_) {}
             });
-          })().catch((err) => {
-            node.warn("Tailwind CSS generation failed: " + err.message);
-            return { css: "", cssHash: "" };
-          })
-        : Promise.resolve({ css: "", cssHash: "" });
-
-      // ── Stale cache cleanup ──
-      if (prevHash && prevHash !== jsxHash && !isHashInUse(prevHash, pageState, endpoint)) {
-        deleteCacheFiles(prevHash);
-      }
-
-      lastJsxHash = jsxHash;
-
-      pageState[endpoint] = {
-        compiled,
-        contentHash,
-        cssReady,
-        jsxHash,
-        css: null,
-        cssHash: "",
-        pageTitle,
-        wsPath,
-        customHead,
-        portalAuth,
-        showWsStatus,
-      };
-
-      cssReady.then(({ css, cssHash }) => {
-        const state = pageState[endpoint];
-        if (state && state.jsxHash === jsxHash) {
-          state.css = css;
-          state.cssHash = cssHash;
-          node.status({ fill: "green", shape: "dot", text: `built • ${endpoint}` });
+            return;
+          }
         }
-      });
+
+        const jsxHash = hash(fullJsx);
+
+        // ── JS: disk cache → transpile ──
+        let compiled = readCachedJS(jsxHash);
+        let cacheHit = !!compiled;
+        if (!compiled) {
+          compiled = transpile(fullJsx);
+          if (!compiled.error) {
+            writeCachedJS(jsxHash, compiled.js, compiled.metafile);
+          }
+        }
+
+        if (compiled.error) {
+          node.error("JSX transpile error: " + compiled.error);
+          RED.log.warn(
+            `[portal-react] ${endpoint} — JSX transpile error: ${compiled.error}`,
+          );
+          node.status({ fill: "red", shape: "dot", text: "transpile error" });
+          clients.forEach((ws) => {
+            try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: compiled.error })); } catch (_) {}
+          });
+        } else {
+          node.status({
+            fill: "green",
+            shape: "dot",
+            text: `built • ${endpoint}`,
+          });
+          if (compiled.metafile) {
+            const output = Object.values(compiled.metafile.outputs)[0];
+            const sizes = output
+              ? Object.entries(output.inputs)
+                  .map(([name, info]) => ({
+                    name: name.replace(/^.*node_modules\//, ""),
+                    bytes: info.bytesInOutput,
+                  }))
+                  .sort((a, b) => b.bytes - a.bytes)
+                  .slice(0, 5)
+              : [];
+            const totalKB = (compiled.js.length / 1024).toFixed(1);
+            node.log(
+              `Bundle${cacheHit ? " (cached)" : ""}: ${totalKB}KB — top: ${sizes.map((s) => `${s.name} (${(s.bytes / 1024).toFixed(1)}KB)`).join(", ")}`,
+            );
+          }
+        }
+
+        const contentHash = compiled.js ? hash(compiled.js) : "";
+
+        // ── CSS: disk cache → in-memory → generate ──
+        const cssReady = !compiled.error
+          ? (() => {
+              const cachedCSS = readCachedCSS(jsxHash);
+              if (cachedCSS) return Promise.resolve(cachedCSS);
+              if (prevState?.jsxHash === jsxHash && prevState?.css) {
+                return Promise.resolve({
+                  css: prevState.css,
+                  cssHash: prevState.cssHash,
+                });
+              }
+              return generateCSS(fullJsx).then(({ css, cssHash }) => {
+                writeCachedCSS(jsxHash, css);
+                return { css, cssHash };
+              });
+            })().catch((err) => {
+              node.warn("Tailwind CSS generation failed: " + err.message);
+              return { css: "", cssHash: "" };
+            })
+          : Promise.resolve({ css: "", cssHash: "" });
+
+        lastJsxHash = jsxHash;
+
+        pageState[endpoint] = {
+          compiled,
+          contentHash,
+          cssReady,
+          jsxHash,
+          css: null,
+          cssHash: "",
+          pageTitle,
+          wsPath,
+          customHead,
+          portalAuth,
+          showWsStatus,
+        };
+
+        // Notify all connected browsers that build finished — triggers reload or overlay cleanup
+        if (!compiled.error && contentHash) {
+          const versionFrame = JSON.stringify({ type: "version", hash: contentHash });
+          clients.forEach((ws) => {
+            try { if (ws.readyState === 1) ws.send(versionFrame); } catch (_) {}
+          });
+        }
+
+        cssReady.then(({ css, cssHash }) => {
+          const state = pageState[endpoint];
+          if (state && state.jsxHash === jsxHash) {
+            state.css = css;
+            state.cssHash = cssHash;
+            node.status({
+              fill: "green",
+              shape: "dot",
+              text: `built • ${endpoint}`,
+            });
+          }
+        });
+      } catch (e) {
+        node.error("Rebuild failed: " + e.message);
+        node.status({ fill: "red", shape: "dot", text: "rebuild error" });
+      }
     }
 
     // Register rebuild callback so library components can trigger re-transpile
@@ -353,41 +472,74 @@ module.exports = function (RED) {
     // Initial build: debounced so all fc-portal-component nodes register first
     scheduleRebuildAll();
     setImmediate(() => {
-
       // Register route only once per endpoint (persists across deploys)
       if (!registeredRoutes[endpoint]) {
         RED.httpNode.get(endpoint, async function (_req, res) {
-          const state = pageState[endpoint];
-          if (!state) {
-            res.status(404).send("Not found");
-            return;
-          }
-          res.set("Cache-Control", "no-store");
-          if (state.compiled.error) {
+          try {
+            const state = pageState[endpoint];
+            if (!state || state.building) {
+              const bWsPath = state?.wsPath || wsPath;
+              res
+                .set("Cache-Control", "no-store")
+                .set("Refresh", "3")
+                .type("text/html")
+                .send(
+                  `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Building\u2026</title><style>@keyframes __sp{to{transform:rotate(360deg)}}body{font-family:monospace;background:#111;color:#888;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}</style></head><body><div style="font-size:24px;margin-bottom:16px">Building\u2026</div><div style="width:40px;height:40px;border:3px solid #333;border-top-color:#888;border-radius:50%;animation:__sp .8s linear infinite"></div><script>(function(){var r=0;function c(){var p=location.protocol==='https:'?'wss:':'ws:';var ws=new WebSocket(p+'//'+location.host+'${bWsPath}');ws.onmessage=function(e){try{var m=JSON.parse(e.data);if(m.type==='version'||m.type==='error')location.reload();}catch(_){}};ws.onclose=function(){var d=Math.min(500*Math.pow(2,r),8000);r++;setTimeout(c,d);};ws.onerror=function(){ws.close();};}c();})()</script></body></html>`,
+                );
+              return;
+            }
+            res.set("Cache-Control", "no-store");
+            if (state.compiled.error) {
+              res
+                .status(500)
+                .type("text/html")
+                .send(
+                  buildErrorPage(
+                    state.pageTitle,
+                    state.compiled.error,
+                    state.wsPath,
+                  ),
+                );
+              return;
+            }
+            const { cssHash } = await Promise.race([
+              state.cssReady,
+              new Promise((_, reject) =>
+                setTimeout(
+                  () => reject(new Error("CSS generation timeout")),
+                  15000,
+                ),
+              ),
+            ]);
+            const user = state.portalAuth
+              ? extractPortalUser(_req.headers)
+              : null;
+            res
+              .type("text/html")
+              .send(
+                buildPage(
+                  state.pageTitle,
+                  state.compiled.js,
+                  state.wsPath,
+                  state.customHead,
+                  cssHash,
+                  user,
+                  state.showWsStatus,
+                  adminRoot,
+                ),
+              );
+          } catch (e) {
             res
               .status(500)
               .type("text/html")
-              .send(buildErrorPage(state.pageTitle, state.compiled.error));
-            return;
+              .send(
+                buildErrorPage(
+                  pageTitle,
+                  "Page build failed: " + e.message,
+                  wsPath,
+                ),
+              );
           }
-          const { cssHash } = await state.cssReady;
-          const user = state.portalAuth
-            ? extractPortalUser(_req.headers)
-            : null;
-          res
-            .type("text/html")
-            .send(
-              buildPage(
-                state.pageTitle,
-                state.compiled.js,
-                state.wsPath,
-                state.customHead,
-                cssHash,
-                user,
-                state.showWsStatus,
-                adminRoot,
-              ),
-            );
         });
         registeredRoutes[endpoint] = true;
       }
@@ -500,7 +652,10 @@ module.exports = function (RED) {
             if (ws.readyState !== 1) return;
             const u = ws._portalUser;
             if (!u) return;
-            if ((matchId && u.userId === matchId) || (matchName && u.username === matchName)) {
+            if (
+              (matchId && u.userId === matchId) ||
+              (matchName && u.username === matchName)
+            ) {
               ws.send(frame);
             }
           });
@@ -655,5 +810,4 @@ module.exports = function (RED) {
     delete registry[name];
     res.json({ ok: true });
   });
-
 };

@@ -68,8 +68,41 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
                   this._portalClient = m.portalClient;
                 }
                 if (m.type === 'version') {
-                  if (this._version && this._version !== m.hash) { location.reload(); return; }
+                  var hasOverlay = document.getElementById('__building_overlay') || document.getElementById('__error_overlay');
+                  if (hasOverlay || (this._version && this._version !== m.hash)) { location.reload(); return; }
                   this._version = m.hash;
+                }
+                if (m.type === 'building') {
+                  document.getElementById('root').style.display = 'none';
+                  var eo = document.getElementById('__error_overlay');
+                  if (eo) eo.remove();
+                  if (!document.getElementById('__building_overlay')) {
+                    var ov = document.createElement('div');
+                    ov.id = '__building_overlay';
+                    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#111;color:#888;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:monospace';
+                    ov.innerHTML = '<div style="font-size:24px;margin-bottom:16px">Building\\u2026</div>'
+                      + '<div style="width:40px;height:40px;border:3px solid #333;border-top-color:#888;border-radius:50%;animation:__sp .8s linear infinite"></div>'
+                      + '<style>@keyframes __sp{to{transform:rotate(360deg)}}</style>';
+                    document.body.appendChild(ov);
+                  }
+                }
+                if (m.type === 'error') {
+                  document.getElementById('root').style.display = 'none';
+                  var bo = document.getElementById('__building_overlay');
+                  if (bo) bo.remove();
+                  var ov = document.getElementById('__error_overlay');
+                  if (!ov) {
+                    ov = document.createElement('div');
+                    ov.id = '__error_overlay';
+                    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#1a0000;color:#f87171;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:monospace;padding:40px';
+                    document.body.appendChild(ov);
+                  }
+                  ov.innerHTML = '<h1 style="color:#ff4444;margin-bottom:16px;font-size:24px">JSX Transpile Error</h1>'
+                    + '<p style="color:#888;margin-bottom:16px">Fix the component code in Node-RED and deploy again.</p>'
+                    + '<pre style="background:#0a0a0a;border:1px solid #ff4444;border-radius:8px;padding:20px;overflow-x:auto;color:#fca5a5;max-width:90vw;max-height:60vh;overflow:auto;white-space:pre-wrap">'
+                    + m.message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                    + '</pre>'
+                    + '<p style="color:#4ade80;font-size:12px;margin-top:24px">Connected \\u2014 will reload on redeploy</p>';
                 }
                 if (m.type === 'data') {
                   this._lastData = m.payload;
@@ -103,13 +136,21 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
         window.__NR.connect();
       <\/script>
       <script>
-        ${escScript(transpiledJs)}
+        try { ${escScript(transpiledJs)}
+        } catch(__e) {
+          var __r = document.getElementById('root');
+          __r.style.cssText = 'font-family:monospace;background:#1a0000;color:#f87171;padding:40px;min-height:100vh;margin:0';
+          __r.innerHTML = '<h1 style="color:#ff4444;margin-bottom:16px">Runtime Error</h1>'
+            + '<p style="color:#888">Fix the component code in Node-RED and deploy again.</p>'
+            + '<pre style="background:#0a0a0a;border:1px solid #ff4444;border-radius:8px;padding:20px;overflow-x:auto;color:#fca5a5;white-space:pre-wrap">'
+            + (__e.message || __e).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+        }
       <\/script>
     </body>
     </html>`;
 }
 
-function buildErrorPage(title, error) {
+function buildErrorPage(title, error, wsPath) {
   return `<!DOCTYPE html>
     <html lang="en">
     <head>
@@ -119,12 +160,49 @@ function buildErrorPage(title, error) {
         body { font-family: monospace; background: #1a0000; color: #f87171; padding: 40px; line-height: 1.6 }
         h1 { color: #ff4444; margin-bottom: 16px }
         pre { background: #0a0a0a; border: 1px solid #ff4444; border-radius: 8px; padding: 20px; overflow-x: auto; color: #fca5a5 }
+        .status { color: #888; font-size: 12px; margin-top: 24px }
+        .status.ok { color: #4ade80 }
       </style>
     </head>
     <body>
       <h1>JSX Transpile Error</h1>
       <p>Fix the component code in Node-RED and deploy again.</p>
       <pre>${esc(error)}</pre>
+      <p class="status" id="st">Waiting for redeploy…</p>
+      <script>
+        (function() {
+          var st = document.getElementById('st');
+          var retries = 0;
+          function connect() {
+            var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            var ws = new WebSocket(p + '//' + location.host + '${wsPath}');
+            ws.onopen = function() {
+              retries = 0;
+              if (st) { st.textContent = 'Connected \\u2014 will reload on redeploy'; st.className = 'status ok'; }
+            };
+            ws.onmessage = function(e) {
+              try {
+                var m = JSON.parse(e.data);
+                if (m.type === 'version' && m.hash) location.reload();
+                if (m.type === 'error') { var pre = document.querySelector('pre'); if (pre) pre.textContent = m.message; }
+              } catch(_) {}
+            };
+            ws.onclose = function() {
+              if (st) { st.textContent = 'Disconnected \\u2014 reconnecting\\u2026'; st.className = 'status'; }
+              var delay = Math.min(500 * Math.pow(2, retries), 8000);
+              retries++;
+              setTimeout(connect, delay);
+            };
+            ws.onerror = function() { ws.close(); };
+          }
+          ${wsPath ? "connect();" : ""}
+          setInterval(function() {
+            fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+              .then(function(r) { if (r.ok) location.reload(); })
+              .catch(function() {});
+          }, 3000);
+        })();
+      <\/script>
     </body>
     </html>`;
 }

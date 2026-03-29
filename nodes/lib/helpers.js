@@ -59,8 +59,7 @@ function extractPortalUser(headers) {
     user.username = headers["x-portal-user-username"];
   if (headers["x-portal-user-email"])
     user.email = headers["x-portal-user-email"];
-  if (headers["x-portal-user-role"])
-    user.role = headers["x-portal-user-role"];
+  if (headers["x-portal-user-role"]) user.role = headers["x-portal-user-role"];
   if (headers["x-portal-user-groups"]) {
     try {
       user.groups = JSON.parse(headers["x-portal-user-groups"]);
@@ -101,7 +100,9 @@ module.exports = function (RED) {
     try {
       const modDir = path.join(event.dir, "node_modules", event.module);
       if (fs.existsSync(modDir)) {
-        RED.log.info(`[portal-react] ${event.module} already in node_modules, skipping install`);
+        RED.log.info(
+          `[portal-react] ${event.module} already in node_modules, skipping install`,
+        );
         return false;
       }
     } catch (_) {}
@@ -115,7 +116,11 @@ module.exports = function (RED) {
     try {
       const js = fs.readFileSync(path.join(cacheDir, jsxHash + ".js"), "utf8");
       let metafile = null;
-      try { metafile = JSON.parse(fs.readFileSync(path.join(cacheDir, jsxHash + ".meta.json"), "utf8")); } catch (_) {}
+      try {
+        metafile = JSON.parse(
+          fs.readFileSync(path.join(cacheDir, jsxHash + ".meta.json"), "utf8"),
+        );
+      } catch (_) {}
       return { js, metafile, error: null };
     } catch (_) {
       return null;
@@ -126,7 +131,11 @@ module.exports = function (RED) {
     try {
       fs.writeFileSync(path.join(cacheDir, jsxHash + ".js"), js, "utf8");
       if (metafile) {
-        fs.writeFileSync(path.join(cacheDir, jsxHash + ".meta.json"), JSON.stringify(metafile), "utf8");
+        fs.writeFileSync(
+          path.join(cacheDir, jsxHash + ".meta.json"),
+          JSON.stringify(metafile),
+          "utf8",
+        );
       }
     } catch (e) {
       RED.log.warn("[portal-react] cache write failed: " + e.message);
@@ -135,7 +144,10 @@ module.exports = function (RED) {
 
   function readCachedCSS(jsxHash) {
     try {
-      const css = fs.readFileSync(path.join(cacheDir, jsxHash + ".css"), "utf8");
+      const css = fs.readFileSync(
+        path.join(cacheDir, jsxHash + ".css"),
+        "utf8",
+      );
       return { css, cssHash: jsxHash };
     } catch (_) {
       return null;
@@ -153,18 +165,42 @@ module.exports = function (RED) {
   function deleteCacheFiles(jsxHash) {
     if (!jsxHash) return;
     for (const ext of [".js", ".css", ".meta.json"]) {
-      try { fs.unlinkSync(path.join(cacheDir, jsxHash + ext)); } catch (_) {}
+      try {
+        fs.unlinkSync(path.join(cacheDir, jsxHash + ext));
+      } catch (_) {}
     }
   }
 
   function isHashInUse(jsxHash, pageState, excludeEndpoint) {
     for (const ep in pageState) {
-      if (ep !== excludeEndpoint && pageState[ep]?.jsxHash === jsxHash) return true;
+      if (ep !== excludeEndpoint && pageState[ep]?.jsxHash === jsxHash)
+        return true;
     }
     return false;
   }
 
   function transpile(jsx) {
+    // Pre-validate with transformSync (fast, no bundling) to avoid esbuild buildSync deadlock on syntax errors
+    try {
+      esbuild.transformSync(jsx, {
+        loader: "jsx",
+        jsx: "transform",
+        jsxFactory: "React.createElement",
+        jsxFragment: "React.Fragment",
+        logLevel: "silent",
+      });
+    } catch (e) {
+      const msg = e.errors?.length
+        ? e.errors
+            .map(
+              (err) =>
+                `${err.text}${err.location ? ` (line ${err.location.line})` : ""}`,
+            )
+            .join("\n")
+        : e.message;
+      return { js: null, error: msg };
+    }
+    // Syntax OK — bundle with full resolution
     try {
       const buildResult = esbuild.buildSync({
         stdin: {
@@ -182,16 +218,33 @@ module.exports = function (RED) {
         jsxFragment: "React.Fragment",
         define: { "process.env.NODE_ENV": '"production"' },
         metafile: true,
+        logLevel: "silent",
         logOverride: { "import-is-undefined": "silent" },
         nodePaths: [path.join(userDir, "node_modules")],
         alias: {
-          "react": path.dirname(require.resolve("react/package.json", { paths: [pkgRoot] })),
-          "react-dom": path.dirname(require.resolve("react-dom/package.json", { paths: [pkgRoot] })),
+          react: path.dirname(
+            require.resolve("react/package.json", { paths: [pkgRoot] }),
+          ),
+          "react-dom": path.dirname(
+            require.resolve("react-dom/package.json", { paths: [pkgRoot] }),
+          ),
         },
       });
-      return { js: buildResult.outputFiles[0].text, metafile: buildResult.metafile, error: null };
+      return {
+        js: buildResult.outputFiles[0].text,
+        metafile: buildResult.metafile,
+        error: null,
+      };
     } catch (e) {
-      return { js: null, error: e.message };
+      const msg = e.errors?.length
+        ? e.errors
+            .map(
+              (err) =>
+                `${err.text}${err.location ? ` (line ${err.location.line})` : ""}`,
+            )
+            .join("\n")
+        : e.message;
+      return { js: null, error: msg };
     }
   }
 
