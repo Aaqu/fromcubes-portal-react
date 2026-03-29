@@ -51,6 +51,12 @@ module.exports = function (RED) {
   }
   const endpointOwners = RED.settings.fcEndpointOwners;
 
+  // Track component name ownership: { compName: nodeId } — prevents duplicate component names
+  if (!RED.settings.fcCompNameOwners) {
+    RED.settings.fcCompNameOwners = {};
+  }
+  const compNameOwners = RED.settings.fcCompNameOwners;
+
   // Debounced rebuild-all: coalesces multiple component registrations into one rebuild pass
   let _rebuildTimer = null;
   function scheduleRebuildAll() {
@@ -80,20 +86,18 @@ module.exports = function (RED) {
       return;
     }
 
+    // Duplicate component name check
+    const existingOwner = compNameOwners[compName];
+    if (existingOwner && existingOwner !== node.id) {
+      node.error(`Component name "${compName}" is already used by another node`);
+      node.status({ fill: "red", shape: "ring", text: "duplicate: " + compName });
+      node.on("close", function (_removed, done) { if (done) done(); });
+      return;
+    }
+    compNameOwners[compName] = node.id;
+
     registry[compName] = {
       code: config.compCode || "",
-      inputs: config.compInputs
-        ? config.compInputs
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [],
-      outputs: config.compOutputs
-        ? config.compOutputs
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
-        : [],
     };
 
     node.status({ fill: "green", shape: "dot", text: compName });
@@ -102,6 +106,9 @@ module.exports = function (RED) {
     scheduleRebuildAll();
 
     node.on("close", function (removed, done) {
+      if (compNameOwners[compName] === node.id) {
+        delete compNameOwners[compName];
+      }
       delete registry[compName];
       if (done) done();
     });
@@ -634,10 +641,10 @@ module.exports = function (RED) {
   });
 
   RED.httpAdmin.post("/portal-react/registry", (req, res) => {
-    const { name, code, inputs, outputs } = req.body || {};
+    const { name, code } = req.body || {};
     if (!isSafeName(name))
       return res.status(400).json({ error: "invalid name" });
-    registry[name] = { code, inputs: inputs || [], outputs: outputs || [] };
+    registry[name] = { code: code || "" };
     res.json({ ok: true });
   });
 

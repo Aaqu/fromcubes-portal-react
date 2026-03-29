@@ -567,26 +567,6 @@
     <label for="node-input-compName"><i class="fa fa-cube"></i> JSX Tag</label>
     <input type="text" id="node-input-compName" placeholder="MyComponent" />
   </div>
-  <div class="form-row" style="display:flex;gap:8px;">
-    <div style="flex:1">
-      <label><i class="fa fa-sign-in"></i> Input fields</label>
-      <input
-        type="text"
-        id="node-input-compInputs"
-        placeholder="payload,topic"
-        style="width:100%"
-      />
-    </div>
-    <div style="flex:1">
-      <label><i class="fa fa-sign-out"></i> Output fields</label>
-      <input
-        type="text"
-        id="node-input-compOutputs"
-        placeholder="payload,topic"
-        style="width:100%"
-      />
-    </div>
-  </div>
   <div class="form-row" style="margin-bottom:4px;">
     <label><i class="fa fa-code"></i> JSX Code</label>
   </div>
@@ -629,8 +609,6 @@
         name: { value: "" },
         compName: { value: "StatusCard", required: true },
         compCode: { value: COMP_STARTER },
-        compInputs: { value: "label,value,unit" },
-        compOutputs: { value: "" },
       },
       inputs: 0,
       outputs: 0,
@@ -1175,12 +1153,6 @@
                   props.map(function (p) {
                     return '<code style="background:rgba(128,128,128,.15);padding:0 4px;border-radius:2px;margin-right:3px;">' + p + '</code>';
                   }).join("") + '</div>');
-              }
-              var io = [];
-              if ((c.inputs || []).length) io.push("in: " + c.inputs.join(", "));
-              if ((c.outputs || []).length) io.push("out: " + c.outputs.join(", "));
-              if (io.length) {
-                detailParts.push('<div style="font-size:10px;opacity:.4;margin-top:2px;">' + io.join(" &bull; ") + '</div>');
               }
               var hasDetail = detailParts.length > 0;
 
