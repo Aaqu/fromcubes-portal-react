@@ -1758,14 +1758,31 @@ const { data, send, user, portalClient } = useNodeRed();
     return root;
   }
 
+  var ROOT_KEY = "__root__";
+
   function renderTree() {
     fileList.empty();
+    var isOpen = !collapsed[ROOT_KEY];
+
+    // Root folder row — always visible
+    var rootRow = $('<div style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-bottom:1px solid var(--red-ui-secondary-border-color);"></div>');
+    var rootArrow = $('<i class="fa ' + (isOpen ? 'fa-caret-down' : 'fa-caret-right') + '" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:10px;text-align:center;cursor:pointer;"></i>');
+    rootArrow.on("click", function () { collapsed[ROOT_KEY] = isOpen; renderTree(); });
+    rootRow.append(rootArrow);
+    $('<i class="fa ' + (isOpen ? 'fa-folder-open' : 'fa-folder') + '" style="color:#fbbf24;font-size:12px;width:16px;text-align:center;"></i>').appendTo(rootRow);
+    $('<span style="flex:1;font-size:12px;cursor:pointer;opacity:0.8;"></span>').text(publicBase.replace(/\/$/, ""))
+      .on("click", function () { collapsed[ROOT_KEY] = isOpen; renderTree(); })
+      .appendTo(rootRow);
+    fileList.append(rootRow);
+
+    if (!isOpen) return;
+
     if (allEntries.length === 0) {
       fileList.append($('<div style="padding:16px;color:var(--red-ui-secondary-text-color);text-align:center;">No files uploaded.<br><span style="font-size:11px;">Drop files here or click Upload.</span></div>'));
       return;
     }
     var tree = buildTree(allEntries);
-    renderNode(tree, "", 0);
+    renderNode(tree, "", 1);
   }
 
   function renderNode(node, parentPath, depth) {
