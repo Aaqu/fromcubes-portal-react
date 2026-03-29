@@ -60,6 +60,16 @@ jobs:
             npm publish --provenance
           fi
 
+      - name: Tag alpha as latest
+        if: steps.check.outputs.version_changed == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(jq -r .version package.json)
+          if [[ "$VERSION" == *-alpha* ]]; then
+            npm dist-tag add @aaqu/fromcubes-portal-react@$VERSION latest
+          fi
+
       - name: Create GitHub Release
         if: steps.check.outputs.version_changed == 'true'
         uses: actions/github-script@v6
