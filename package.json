@@ -1,6 +1,6 @@
 {
   "name": "@aaqu/fromcubes-portal-react",
-  "version": "0.1.0-alpha.16",
+  "version": "0.1.0-alpha.17",
   "description": "Fromcubes Portal - React for Node-RED with Tailwind CSS and auto complete",
   "keywords": [
     "node-red",
@@ -26,17 +26,17 @@
     "node": ">=18"
   },
   "dependencies": {
-    "esbuild": "^0.27.4",
+    "esbuild": "^0.28.0",
     "monaco-editor": "^0.55.1",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "tailwindcss": "^4.2.1"
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tailwindcss": "^4.2.2"
   },
   "devDependencies": {
-    "node-red": "next",
-    "prettier": "^3.8.1",
+    "node-red": "5.0.0-beta.4",
+    "prettier": "^3.8.2",
     "supertest": "^7.2.2",
-    "vitest": "^4.1.2"
+    "vitest": "^4.1.4"
   },
   "scripts": {
     "start": "node-red",
