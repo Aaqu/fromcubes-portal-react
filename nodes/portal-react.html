@@ -56,7 +56,7 @@
       var libContent = [
         "declare var React: any;",
         "declare var ReactDOM: any;",
-        "declare function useNodeRed(): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null };",
+        "declare function useNodeRed(opts?: { ignoreRecovery?: boolean }): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null };",
       ].join("\n");
       console.log(PREFIX, "addExtraLib globals.d.ts");
       jsDef.addExtraLib(libContent, "file:///globals.d.ts");
@@ -813,10 +813,22 @@
         <input type="text" id="node-input-name" placeholder="My Portal" />
       </div>
       <div class="form-row">
-        <label for="node-input-endpoint"
-          ><i class="fa fa-globe"></i> Endpoint</label
+        <label for="node-input-subPath"
+          ><i class="fa fa-globe"></i> Sub-path</label
         >
-        <input type="text" id="node-input-endpoint" placeholder="/fromcubes" />
+        <div style="display:inline-flex;align-items:stretch;width:70%;">
+          <span
+            style="display:inline-flex;align-items:center;padding:0 8px;background:var(--red-ui-secondary-background,#f3f3f3);border:1px solid var(--red-ui-form-input-border-color,#ccc);border-right:none;border-radius:4px 0 0 4px;color:var(--red-ui-secondary-text-color,#888);font-family:monospace;user-select:none;"
+            >/fromcubes/</span
+          >
+          <input
+            type="text"
+            id="node-input-subPath"
+            placeholder="sensors"
+            style="flex:1;border-radius:0 4px 4px 0;"
+          />
+        </div>
+        <input type="hidden" id="node-input-endpoint" />
         <div
           style="font-size:11px;opacity:.5;margin-top:2px;margin-left:105px;"
           id="fc-url-hint"
@@ -929,7 +941,27 @@
       color: "#61dafb",
       defaults: {
         name: { value: "" },
-        endpoint: { value: "/fromcubes", required: true },
+        subPath: {
+          value: "",
+          required: true,
+          validate: function (v) {
+            if (typeof v !== "string") return false;
+            var t = v.trim();
+            if (t.length === 0) return false;
+            if (/\s/.test(t)) return false;
+            if (t.charAt(0) === "/" || t.charAt(t.length - 1) === "/") return false;
+            var segs = t.split("/");
+            for (var i = 0; i < segs.length; i++) {
+              var s = segs[i];
+              if (!s || s === "." || s === "..") return false;
+              var lower = s.toLowerCase();
+              if (lower === "public" || lower === "_ws") return false;
+              if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(s)) return false;
+            }
+            return true;
+          },
+        },
+        endpoint: { value: "" },
         pageTitle: { value: "fromcubes" },
         componentCode: { value: STARTER },
         customHead: { value: "" },
@@ -942,7 +974,7 @@
       icon: "font-awesome/fa-desktop",
       paletteLabel: "fromcubes portal",
       label: function () {
-        return this.name || this.endpoint || "portal react";
+        return this.name || ("/fromcubes/" + (this.subPath || "?"));
       },
 
       oneditprepare: function () {
@@ -984,13 +1016,45 @@
         fcTabs.addTab({ id: "fc-tab-head", label: "Head HTML" });
         fcTabs.activateTab("fc-tab-jsx");
 
+        // Legacy endpoint detection + convenience pre-fill
+        if (node.endpoint && typeof node.endpoint === "string") {
+          var legacy = node.endpoint;
+          var prefix = "/fromcubes/";
+          if (legacy.indexOf(prefix) === 0) {
+            if (!node.subPath) {
+              $("#node-input-subPath").val(legacy.slice(prefix.length));
+            }
+          } else if (legacy !== "" && legacy !== "/fromcubes") {
+            $("#fc-url-hint")
+              .css("color", "#c00")
+              .text(
+                "Legacy endpoint detected: '" +
+                  legacy +
+                  "'. Set a Sub-path and redeploy.",
+              );
+          }
+        }
+
         // URL hint
         function updateHint() {
-          var ep = $("#node-input-endpoint").val() || "/fromcubes";
+          var sp = ($("#node-input-subPath").val() || "").trim();
           var root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
-          $("#fc-url-hint").text("Page served at: http://<host>:1880" + root + ep);
+          if (sp) {
+            $("#fc-url-hint")
+              .css("color", "")
+              .text(
+                "Page served at: http://<host>:1880" +
+                  root +
+                  "/fromcubes/" +
+                  sp,
+              );
+          } else if (!node.endpoint || node.endpoint.indexOf("/fromcubes/") === 0) {
+            $("#fc-url-hint")
+              .css("color", "")
+              .text("Sub-path required (will be served under /fromcubes/<sub-path>)");
+          }
         }
-        $("#node-input-endpoint").on("input", updateHint);
+        $("#node-input-subPath").on("input", updateHint);
         updateHint();
 
         // Modules editableList (like function node's libs)
@@ -1117,9 +1181,9 @@
         });
 
         $("#fc-btn-preview").on("click", function () {
-          var ep = $("#node-input-endpoint").val();
+          var sp = ($("#node-input-subPath").val() || "").trim();
           var root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
-          if (ep) window.open(root + ep, "_blank");
+          if (sp) window.open(root + "/fromcubes/" + sp, "_blank");
         });
 
         $("#fc-btn-components").on("click", function () {
@@ -1238,6 +1302,11 @@
 
       oneditsave: function () {
         console.log("[FC-Monaco] PORTAL oneditsave");
+
+        // Clear legacy endpoint field + normalize subPath
+        $("#node-input-endpoint").val("");
+        this.endpoint = "";
+        this.subPath = ($("#node-input-subPath").val() || "").trim();
 
         // Collect libs from editableList
         var libs = [];

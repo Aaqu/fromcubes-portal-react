@@ -59,7 +59,7 @@
     "type": "portal-react",
     "z": "fc-chart-flow",
     "name": "Chart Portal",
-    "endpoint": "/fromcubes/chart",
+    "subPath": "chart",
     "pageTitle": "fromcubes charts",
     "customHead": "",
     "portalAuth": false,

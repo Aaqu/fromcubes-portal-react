@@ -46,7 +46,7 @@
     "type": "portal-react",
     "z": "fc-d3-flow",
     "name": "Poland Map",
-    "endpoint": "/fromcubes/poland",
+    "subPath": "poland",
     "pageTitle": "Poland Energy Grid",
     "customHead": "",
     "portalAuth": false,

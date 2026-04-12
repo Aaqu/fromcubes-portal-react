@@ -58,7 +58,7 @@
     "type": "portal-react",
     "z": "fc-pixi-flow",
     "name": "Pixi Portal",
-    "endpoint": "/fromcubes/pixi",
+    "subPath": "pixi",
     "pageTitle": "fromcubes Pixi",
     "customHead": "",
     "portalAuth": false,

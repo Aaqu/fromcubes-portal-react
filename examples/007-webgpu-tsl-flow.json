@@ -58,7 +58,7 @@
     "type": "portal-react",
     "z": "fc-webgpu-flow",
     "name": "WebGPU Portal",
-    "endpoint": "/fromcubes/webgpu",
+    "subPath": "webgpu",
     "pageTitle": "fromcubes WebGPU",
     "customHead": "",
     "portalAuth": false,

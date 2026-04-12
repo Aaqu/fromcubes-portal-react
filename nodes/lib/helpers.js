@@ -50,6 +50,50 @@ function isSafeName(name) {
   );
 }
 
+const SUB_PATH_SEGMENT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const SUB_PATH_RESERVED = new Set(["public", "_ws"]);
+
+function validateSubPath(input) {
+  if (typeof input !== "string") {
+    return { ok: false, error: "Sub-path is required" };
+  }
+  const trimmed = input.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "Sub-path is required" };
+  }
+  if (/\s/.test(trimmed)) {
+    return { ok: false, error: "Sub-path must not contain whitespace" };
+  }
+  if (trimmed.startsWith("/")) {
+    return { ok: false, error: "Sub-path must not start with /" };
+  }
+  if (trimmed.endsWith("/")) {
+    return { ok: false, error: "Sub-path must not end with /" };
+  }
+  const segments = trimmed.split("/");
+  for (const seg of segments) {
+    if (seg.length === 0) {
+      return { ok: false, error: "Sub-path must not contain empty segments" };
+    }
+    if (seg === "." || seg === "..") {
+      return { ok: false, error: "Path traversal not allowed in sub-path" };
+    }
+    if (SUB_PATH_RESERVED.has(seg.toLowerCase())) {
+      return {
+        ok: false,
+        error: `Sub-path segment "${seg}" is reserved`,
+      };
+    }
+    if (!SUB_PATH_SEGMENT_RE.test(seg)) {
+      return {
+        ok: false,
+        error: `Sub-path segment "${seg}" contains invalid characters`,
+      };
+    }
+  }
+  return { ok: true, value: trimmed };
+}
+
 function extractPortalUser(headers) {
   const user = {};
   if (headers["x-portal-user-id"]) user.userId = headers["x-portal-user-id"];
@@ -90,6 +134,13 @@ function escScript(s) {
 }
 
 module.exports = function (RED) {
+  return createHelpers(RED);
+};
+
+module.exports.validateSubPath = validateSubPath;
+module.exports.isSafeName = isSafeName;
+
+function createHelpers(RED) {
   // Package root — where react/react-dom live (this package's own node_modules)
   const pkgRoot = path.join(__dirname, "../..");
   // userDir — where dynamicModuleList installs user packages
@@ -255,6 +306,7 @@ module.exports = function (RED) {
     extractPortalUser,
     removeRoute,
     isSafeName,
+    validateSubPath,
     esc,
     escScript,
     pkgRoot,
@@ -267,4 +319,4 @@ module.exports = function (RED) {
     deleteCacheFiles,
     isHashInUse,
   };
-};
+}

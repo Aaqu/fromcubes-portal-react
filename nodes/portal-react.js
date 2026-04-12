@@ -85,6 +85,7 @@ module.exports = function (RED) {
     extractPortalUser,
     removeRoute,
     isSafeName,
+    validateSubPath,
     userDir,
     readCachedJS,
     writeCachedJS,
@@ -94,6 +95,14 @@ module.exports = function (RED) {
     isHashInUse,
   } = helpers;
   const { buildPage, buildErrorPage } = require("./lib/page-builder");
+  const hooks = require("./lib/hooks")(RED);
+  const router = require("./lib/router");
+
+  // Per-process cache of the last broadcast payload per endpoint.
+  // Lets a freshly-connected client see the most recent broadcast value
+  // (similar to dashboard2's lastMsg recovery). Sent as a distinct
+  // `recovery` WS frame so React can opt out via useNodeRed({ ignoreRecovery: true }).
+  const lastBroadcastCache = new Map();
 
   // ── Canvas node: shared component ─────────────────────────────
 
@@ -153,7 +162,33 @@ module.exports = function (RED) {
     const nodeId = node.id;
 
     // Config
-    const endpoint = (config.endpoint || "/fromcubes").replace(/\/+$/, "");
+    const subPathResult = validateSubPath(config.subPath);
+    const legacyEndpoint =
+      typeof config.endpoint === "string" && config.endpoint.trim().length > 0
+        ? config.endpoint.trim()
+        : null;
+
+    if (!subPathResult.ok) {
+      // No valid subPath. If there's a legacy endpoint, hard-fail with a
+      // migration message; otherwise fail on the sub-path error.
+      if (legacyEndpoint) {
+        node.error(
+          `Legacy 'endpoint' field detected ("${legacyEndpoint}"). ` +
+            "Open the node, set a Sub-path (served under /fromcubes/<sub-path>), and redeploy.",
+        );
+        node.status({ fill: "red", shape: "ring", text: "legacy endpoint" });
+      } else {
+        node.error("Invalid sub-path: " + subPathResult.error);
+        node.status({ fill: "red", shape: "ring", text: "bad sub-path" });
+      }
+      node.on("close", function (_removed, done) {
+        if (done) done();
+      });
+      return;
+    }
+    const subPath = subPathResult.value;
+    const endpoint = "/fromcubes/" + subPath;
+
     const componentCode = config.componentCode || "";
     const pageTitle = config.pageTitle || "Portal";
     const customHead = config.customHead || "";
@@ -180,8 +215,8 @@ module.exports = function (RED) {
     endpointOwners[endpoint] = nodeId;
 
     // State
-    const clients = new Map(); // portalId → ws
-    let lastPayload = null;
+    const clients = new Map(); // portalClient → ws
+    const userIndex = new Map(); // userId → Set<ws>   (O(1) user-cast)
     let wsServer = null;
     let isClosing = false;
     let lastJsxHash = null;
@@ -293,11 +328,14 @@ module.exports = function (RED) {
           "",
           "// ── useNodeRed hook ──",
           [
-            "function useNodeRed() {",
+            "function useNodeRed(opts) {",
+            "  // opts.ignoreRecovery = true → ignore the cached last-broadcast",
+            "  // frame the server sends on connect; data stays undefined until",
+            "  // a fresh broadcast arrives. Latched once globally — strictest",
+            "  // call wins (any caller asking to ignore disables recovery for all).",
+            "  if (opts && opts.ignoreRecovery) window.__NR._ignoreRecovery = true;",
             "  const [data, setData] = React.useState(window.__NR._lastData);",
-            "  React.useEffect(() => {",
-            "    return window.__NR.subscribe(setData);",
-            "  }, []);",
+            "  React.useEffect(() => window.__NR.subscribe(setData), []);",
             "  const send = React.useCallback((payload, topic) => {",
             "    window.__NR.send(payload, topic);",
             "  }, []);",
@@ -566,6 +604,12 @@ module.exports = function (RED) {
             pathname = request.url;
           }
           if (pathname === wsPath) {
+            // Plugin hook: plugins may reject the connection before upgrade.
+            // Default (no plugins) = allowed, matches dashboard behavior.
+            if (!hooks.allow("onIsValidConnection", request)) {
+              try { socket.destroy(); } catch (_) {}
+              return;
+            }
             wsServer.handleUpgrade(request, socket, head, (ws) => {
               wsServer.emit("connection", ws, request);
             });
@@ -586,12 +630,19 @@ module.exports = function (RED) {
             ws._portalUser = extractPortalUser(request.headers);
           }
           clients.set(portalClient, ws);
-          updateStatus();
 
-          // Push current state to new client
-          if (lastPayload !== null) {
-            wsSend(ws, { type: "data", payload: lastPayload });
+          // Index by userId for O(1) user-cast routing
+          const userId = ws._portalUser && ws._portalUser.userId;
+          if (userId) {
+            let set = userIndex.get(userId);
+            if (!set) {
+              set = new Set();
+              userIndex.set(userId, set);
+            }
+            set.add(ws);
           }
+
+          updateStatus();
 
           // Send content version for deploy-reload detection
           const contentHash = pageState[endpoint]?.contentHash || "";
@@ -600,35 +651,55 @@ module.exports = function (RED) {
           // Send assigned portalClient to browser
           wsSend(ws, { type: "hello", portalClient });
 
+          // Send the cached last broadcast (if any) as a distinct
+          // `recovery` frame. The browser uses this to seed `data` on a
+          // fresh connection. React components can opt out via
+          // useNodeRed({ ignoreRecovery: true }).
+          if (lastBroadcastCache.has(endpoint)) {
+            wsSend(ws, { type: "recovery", payload: lastBroadcastCache.get(endpoint) });
+          }
+
           ws.on("message", (raw) => {
             try {
               const msg = JSON.parse(raw.toString());
               if (msg.type === "output") {
-                const out = {
+                let out = {
                   payload: msg.payload,
                   topic: msg.topic || "",
                 };
+                // Server-side identity injection — the client cannot forge
+                // _client because we build it from ws state, not from the
+                // inbound frame.
                 const client = { portalClient: ws._portalClient };
                 if (portalAuth && ws._portalUser) {
                   Object.assign(client, ws._portalUser);
                 }
                 out._client = client;
-                node.send(out);
+                // Transform hook — plugins may mutate / drop the msg.
+                // A hook returning null signals "drop this message".
+                out = hooks.transform("onInbound", out, ws);
+                if (out) node.send(out);
+                return;
               }
             } catch (e) {
               node.warn("Bad WS message: " + e.message);
             }
           });
 
-          ws.on("close", () => {
+          const detach = () => {
             clients.delete(portalClient);
+            if (userId) {
+              const set = userIndex.get(userId);
+              if (set) {
+                set.delete(ws);
+                if (set.size === 0) userIndex.delete(userId);
+              }
+            }
             updateStatus();
-          });
+          };
 
-          ws.on("error", () => {
-            clients.delete(portalClient);
-            updateStatus();
-          });
+          ws.on("close", detach);
+          ws.on("error", detach);
         });
       } catch (e) {
         node.error("WebSocket setup failed: " + e.message);
@@ -636,37 +707,27 @@ module.exports = function (RED) {
 
       // ── Input handler ─────────────────────────────────────────
 
-      node.on("input", (msg, send, done) => {
-        const target = msg._client;
-        const frame = JSON.stringify({ type: "data", payload: msg.payload });
-
-        if (target && target.portalClient) {
-          // Target specific client by portalClient
-          const ws = clients.get(target.portalClient);
-          if (ws && ws.readyState === 1) ws.send(frame);
-        } else if (target && (target.userId || target.username)) {
-          // Target all sessions of a specific user
-          const matchId = target.userId;
-          const matchName = target.username;
-          clients.forEach((ws) => {
-            if (ws.readyState !== 1) return;
-            const u = ws._portalUser;
-            if (!u) return;
-            if (
-              (matchId && u.userId === matchId) ||
-              (matchName && u.username === matchName)
-            ) {
-              ws.send(frame);
-            }
-          });
-        } else {
-          // Broadcast to all (default)
-          lastPayload = msg.payload;
-          clients.forEach((ws) => {
-            if (ws.readyState === 1) ws.send(frame);
-          });
+      // sendTo: single point where every outbound frame passes through
+      // the onCanSendTo hook. Strict-by-default — no opt-in per widget
+      // type like dashboard's acceptsClientConfig.
+      function sendTo(ws, frame, msg) {
+        if (!ws || ws.readyState !== 1) return false;
+        if (!hooks.allow("onCanSendTo", ws, msg)) return false;
+        try {
+          ws.send(frame);
+          return true;
+        } catch (_) {
+          return false;
         }
+      }
 
+      node.on("input", (msg, send, done) => {
+        const result = router.route(msg, { clients, userIndex, sendTo });
+        // Cache the latest broadcast payload so freshly-connected clients
+        // can recover it via the `recovery` frame on connect.
+        if (result.mode === "broadcast") {
+          lastBroadcastCache.set(endpoint, msg.payload);
+        }
         updateStatus();
         if (done) done();
       });
@@ -705,6 +766,16 @@ module.exports = function (RED) {
         if (endpointOwners[endpoint] === nodeId) {
           delete endpointOwners[endpoint];
         }
+
+        // Drop the recovery cache only on full node removal — on a
+        // redeploy we keep it so reconnecting clients still recover.
+        if (removed) {
+          lastBroadcastCache.delete(endpoint);
+        }
+
+        // Clear the userIndex — WS clients are already closed above, but
+        // the Map itself should not outlive the node instance.
+        userIndex.clear();
 
         // Clean up route only when node is fully removed (not redeployed)
         if (removed) {

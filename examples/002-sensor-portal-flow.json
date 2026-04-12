@@ -47,7 +47,7 @@
     "type": "portal-react",
     "z": "fc-demo-flow",
     "name": "Sensor Portal",
-    "endpoint": "/fromcubes/sensors",
+    "subPath": "sensors",
     "pageTitle": "Sensors",
     "customHead": "",
     "inputSchema": "[{\"name\":\"temp\",\"type\":\"number\"},{\"name\":\"humidity\",\"type\":\"number\"},{\"name\":\"pressure\",\"type\":\"number\"},{\"name\":\"ts\",\"type\":\"number\"}]",

@@ -58,7 +58,7 @@
     "type": "portal-react",
     "z": "fc-three-flow",
     "name": "3D Portal",
-    "endpoint": "/fromcubes/3d",
+    "subPath": "threejs",
     "pageTitle": "fromcubes 3D",
     "customHead": "",
     "portalAuth": false,
