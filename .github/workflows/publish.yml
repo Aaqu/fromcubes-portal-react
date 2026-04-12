@@ -66,6 +66,7 @@ jobs:
 
       - name: Tag alpha as latest
         if: steps.check.outputs.version_changed == 'true'
+        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |

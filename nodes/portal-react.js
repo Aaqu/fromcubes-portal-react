@@ -243,7 +243,7 @@ module.exports = function (RED) {
         }
         pageState[endpoint] = { building: true, wsPath, pageTitle };
         clients.forEach((ws) => {
-          try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "building" })); } catch (_) {}
+          try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "building" })); } catch (e) { RED.log.trace("[portal-react] ws send building: " + e.message); }
         });
 
         // Selective injection: only include components referenced in user code (+ transitive deps)
@@ -388,7 +388,7 @@ module.exports = function (RED) {
               showWsStatus,
             };
             clients.forEach((ws) => {
-              try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: missingReturnError.error })); } catch (_) {}
+              try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: missingReturnError.error })); } catch (e) { RED.log.trace("[portal-react] ws send error frame: " + e.message); }
             });
             return;
           }
@@ -413,7 +413,7 @@ module.exports = function (RED) {
           );
           node.status({ fill: "red", shape: "dot", text: "transpile error" });
           clients.forEach((ws) => {
-            try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: compiled.error })); } catch (_) {}
+            try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: compiled.error })); } catch (e) { RED.log.trace("[portal-react] ws send transpile error: " + e.message); }
           });
         } else {
           node.status({
@@ -482,7 +482,7 @@ module.exports = function (RED) {
         if (!compiled.error && contentHash) {
           const versionFrame = JSON.stringify({ type: "version", hash: contentHash });
           clients.forEach((ws) => {
-            try { if (ws.readyState === 1) ws.send(versionFrame); } catch (_) {}
+            try { if (ws.readyState === 1) ws.send(versionFrame); } catch (e) { RED.log.trace("[portal-react] ws send version: " + e.message); }
           });
         }
 
@@ -607,7 +607,7 @@ module.exports = function (RED) {
             // Plugin hook: plugins may reject the connection before upgrade.
             // Default (no plugins) = allowed, matches dashboard behavior.
             if (!hooks.allow("onIsValidConnection", request)) {
-              try { socket.destroy(); } catch (_) {}
+              try { socket.destroy(); } catch (e) { RED.log.trace("[portal-react] socket destroy: " + e.message); }
               return;
             }
             wsServer.handleUpgrade(request, socket, head, (ws) => {
@@ -716,7 +716,8 @@ module.exports = function (RED) {
         try {
           ws.send(frame);
           return true;
-        } catch (_) {
+        } catch (e) {
+          RED.log.trace("[portal-react] ws send frame: " + e.message);
           return false;
         }
       }
@@ -747,7 +748,7 @@ module.exports = function (RED) {
         clients.forEach((ws) => {
           try {
             ws.close(1001, "node redeployed");
-          } catch (_) {}
+          } catch (e) { RED.log.trace("[portal-react] ws close client: " + e.message); }
         });
         clients.clear();
 
@@ -755,7 +756,7 @@ module.exports = function (RED) {
         if (wsServer) {
           try {
             wsServer.close();
-          } catch (_) {}
+          } catch (e) { RED.log.trace("[portal-react] wsServer close: " + e.message); }
           wsServer = null;
         }
 
@@ -796,7 +797,7 @@ module.exports = function (RED) {
       function wsSend(ws, obj) {
         try {
           if (ws.readyState === 1) ws.send(JSON.stringify(obj));
-        } catch (_) {}
+        } catch (e) { RED.log.trace("[portal-react] wsSend: " + e.message); }
       }
 
       function updateStatus() {

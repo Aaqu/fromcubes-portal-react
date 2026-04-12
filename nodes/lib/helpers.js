@@ -121,18 +121,6 @@ function removeRoute(router, path) {
   );
 }
 
-function esc(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function escScript(s) {
-  return String(s).replace(/<\/(script)/gi, "<\\/$1");
-}
-
 module.exports = function (RED) {
   return createHelpers(RED);
 };
@@ -307,8 +295,6 @@ function createHelpers(RED) {
     removeRoute,
     isSafeName,
     validateSubPath,
-    esc,
-    escScript,
     pkgRoot,
     userDir,
     cacheDir,
