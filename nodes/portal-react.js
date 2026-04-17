@@ -45,6 +45,20 @@ module.exports = function (RED) {
   }
   const rebuildCallbacks = RED.settings.fcRebuildCallbacks;
 
+  // Per-portal set of component names the portal depends on (needed set from last rebuild,
+  // including transitive deps). Lets component changes target only portals that use them.
+  if (!RED.settings.fcPortalNeeded) {
+    RED.settings.fcPortalNeeded = {};
+  }
+  const portalNeeded = RED.settings.fcPortalNeeded;
+
+  // Per-portal raw user JSX code string. Used as fallback to detect references to
+  // newly-added components that haven't been in a `needed` set yet.
+  if (!RED.settings.fcPortalCode) {
+    RED.settings.fcPortalCode = {};
+  }
+  const portalCode = RED.settings.fcPortalCode;
+
   // Track endpoint ownership: { endpoint: nodeId } — prevents duplicate endpoints
   if (!RED.settings.fcEndpointOwners) {
     RED.settings.fcEndpointOwners = {};
@@ -57,23 +71,77 @@ module.exports = function (RED) {
   }
   const compNameOwners = RED.settings.fcCompNameOwners;
 
-  // Debounced rebuild-all: coalesces multiple component registrations into one rebuild pass
-  // Yields event loop between builds so HTTP server stays responsive
+  // Debounced selective rebuild: coalesces multiple component changes into one pass.
+  // Yields event loop between builds so HTTP server stays responsive.
   let _rebuildTimer = null;
-  function scheduleRebuildAll() {
+  const _dirtyComps = new Set();
+  let _rebuildAllPending = false;
+
+  // Startup gate: on first process start, Node-RED constructs portal/component nodes
+  // sequentially over a window longer than the 50ms debounce. Without gating, an early
+  // flush rebuilds a portal, then a late component registration triggers a second
+  // rebuild. Hold all flushes until `flows:started` (or a 2s failsafe) so startup
+  // collapses to exactly one rebuild pass.
+  let _startupPhase = true;
+  function _endStartupPhase() {
+    if (!_startupPhase) return;
+    _startupPhase = false;
+    if (_rebuildAllPending || _dirtyComps.size > 0) {
+      if (_rebuildTimer) { clearTimeout(_rebuildTimer); _rebuildTimer = null; }
+      _flushRebuild();
+    }
+  }
+  try {
+    if (RED.events && typeof RED.events.once === "function") {
+      RED.events.once("flows:started", _endStartupPhase);
+    }
+  } catch (e) { RED.log.trace("[portal-react] events.once: " + e.message); }
+  // Failsafe: if flows:started never arrives (module loaded mid-run, test harness, etc.)
+  setTimeout(_endStartupPhase, 2000).unref?.();
+
+  function _armRebuild() {
+    if (_startupPhase) return; // gated — _endStartupPhase will flush
     if (_rebuildTimer) clearTimeout(_rebuildTimer);
-    _rebuildTimer = setTimeout(() => {
-      _rebuildTimer = null;
-      const fns = Object.values(rebuildCallbacks);
-      let i = 0;
-      function next() {
-        if (i >= fns.length) return;
-        try { fns[i](); } catch (e) { RED.log.error("[portal-react] rebuild failed: " + e.message); }
-        i++;
-        if (i < fns.length) setImmediate(next);
+    _rebuildTimer = setTimeout(_flushRebuild, 50);
+  }
+  function scheduleRebuildAll() {
+    _rebuildAllPending = true;
+    _armRebuild();
+  }
+  function scheduleRebuildUsing(compName) {
+    if (!compName) return;
+    _dirtyComps.add(compName);
+    _armRebuild();
+  }
+  function _flushRebuild() {
+    _rebuildTimer = null;
+    const all = _rebuildAllPending;
+    const dirty = new Set(_dirtyComps);
+    _rebuildAllPending = false;
+    _dirtyComps.clear();
+
+    const targetIds = new Set();
+    for (const nodeId of Object.keys(rebuildCallbacks)) {
+      if (all) { targetIds.add(nodeId); continue; }
+      const used = portalNeeded[nodeId];
+      const raw = portalCode[nodeId] || "";
+      for (const name of dirty) {
+        if ((used && used.has(name)) || raw.includes(name)) {
+          targetIds.add(nodeId);
+          break;
+        }
       }
-      next();
-    }, 50);
+    }
+
+    const fns = [...targetIds].map((id) => rebuildCallbacks[id]).filter(Boolean);
+    let i = 0;
+    function next() {
+      if (i >= fns.length) return;
+      try { fns[i](); } catch (e) { RED.log.error("[portal-react] rebuild failed: " + e.message); }
+      i++;
+      if (i < fns.length) setImmediate(next);
+    }
+    next();
   }
 
   // ── Load modules ─────────────────────────────────────────────
@@ -135,20 +203,24 @@ module.exports = function (RED) {
     }
     compNameOwners[compName] = node.id;
 
-    registry[compName] = {
-      code: config.compCode || "",
-    };
+    const newCode = config.compCode || "";
+    const prevCode = registry[compName]?.code;
+    registry[compName] = { code: newCode };
 
     node.status({ fill: "green", shape: "dot", text: compName });
 
-    // Trigger re-transpile on all portal-react nodes (debounced across all component registrations)
-    scheduleRebuildAll();
+    // Only rebuild portals that reference this component, and only if the code actually changed.
+    if (prevCode !== newCode) {
+      scheduleRebuildUsing(compName);
+    }
 
     node.on("close", function (removed, done) {
       if (compNameOwners[compName] === node.id) {
         delete compNameOwners[compName];
       }
       delete registry[compName];
+      // Portals depending on this component must rebuild (topology changed or name resolution breaks).
+      scheduleRebuildUsing(compName);
       if (done) done();
     });
   }
@@ -267,6 +339,10 @@ module.exports = function (RED) {
             addWithDeps(name);
           }
         }
+
+        // Remember which components this portal depends on, so component changes
+        // can target only affected portals.
+        portalNeeded[nodeId] = new Set(needed);
 
         // Topological sort only needed components
         const entries = allEntries.filter(([n]) => needed.has(n));
@@ -416,25 +492,26 @@ module.exports = function (RED) {
             try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: compiled.error })); } catch (e) { RED.log.trace("[portal-react] ws send transpile error: " + e.message); }
           });
         } else {
-          node.status({
-            fill: "green",
-            shape: "dot",
-            text: `built • ${endpoint}`,
-          });
+          updateStatus();
           if (compiled.metafile) {
             const output = Object.values(compiled.metafile.outputs)[0];
             const sizes = output
               ? Object.entries(output.inputs)
                   .map(([name, info]) => ({
-                    name: name.replace(/^.*node_modules\//, ""),
+                    name: name
+                      .replace(/^.*node_modules\//, "")
+                      .replace(/\.(js|mjs|cjs|ts|tsx)$/, ""),
                     bytes: info.bytesInOutput,
                   }))
                   .sort((a, b) => b.bytes - a.bytes)
                   .slice(0, 5)
               : [];
-            const totalKB = (compiled.js.length / 1024).toFixed(1);
+            const totalKB = Math.round(compiled.js.length / 1024);
+            const top = sizes
+              .map((s) => `${s.name} ${Math.round(s.bytes / 1024)}`)
+              .join(" · ");
             node.log(
-              `Bundle${cacheHit ? " (cached)" : ""}: ${totalKB}KB — top: ${sizes.map((s) => `${s.name} (${(s.bytes / 1024).toFixed(1)}KB)`).join(", ")}`,
+              `[${node.id}] ${cacheHit ? "cached" : "built"} ${totalKB}KB · ${top}`,
             );
           }
         }
@@ -491,11 +568,7 @@ module.exports = function (RED) {
           if (state && state.jsxHash === jsxHash) {
             state.css = css;
             state.cssHash = cssHash;
-            node.status({
-              fill: "green",
-              shape: "dot",
-              text: `built • ${endpoint}`,
-            });
+            updateStatus();
           }
         });
       } catch (e) {
@@ -506,6 +579,8 @@ module.exports = function (RED) {
 
     // Register rebuild callback so library components can trigger re-transpile
     rebuildCallbacks[nodeId] = rebuild;
+    // Remember raw user JSX so selective rebuild can detect references to new components
+    portalCode[nodeId] = componentCode;
 
     // Initial build: debounced so all fc-portal-component nodes register first
     scheduleRebuildAll();
@@ -760,8 +835,10 @@ module.exports = function (RED) {
           wsServer = null;
         }
 
-        // Unregister rebuild callback
+        // Unregister rebuild callback + selective-rebuild metadata
         delete rebuildCallbacks[nodeId];
+        delete portalNeeded[nodeId];
+        delete portalCode[nodeId];
 
         // Release endpoint ownership
         if (endpointOwners[endpoint] === nodeId) {
@@ -871,7 +948,12 @@ module.exports = function (RED) {
     const { name, code } = req.body || {};
     if (!isSafeName(name))
       return res.status(400).json({ error: "invalid name" });
-    registry[name] = { code: code || "" };
+    const newCode = code || "";
+    const prevCode = registry[name]?.code;
+    registry[name] = { code: newCode };
+    if (prevCode !== newCode) {
+      scheduleRebuildUsing(name);
+    }
     res.json({ ok: true });
   });
 
@@ -879,7 +961,11 @@ module.exports = function (RED) {
     const name = req.params.name;
     if (!isSafeName(name))
       return res.status(400).json({ error: "invalid name" });
+    const existed = Object.prototype.hasOwnProperty.call(registry, name);
     delete registry[name];
+    if (existed) {
+      scheduleRebuildUsing(name);
+    }
     res.json({ ok: true });
   });
 };
