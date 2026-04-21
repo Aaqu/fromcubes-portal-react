@@ -71,11 +71,18 @@ module.exports = function (RED) {
   }
   const compNameOwners = RED.settings.fcCompNameOwners;
 
+  // Per-portal config signature — detects no-op Full-deploy reconstructions so unchanged
+  // portals skip rebuild entirely (Node-RED closes/reopens every node on Full deploy).
+  if (!RED.settings.fcPortalSig) {
+    RED.settings.fcPortalSig = {};
+  }
+  const portalSig = RED.settings.fcPortalSig;
+
   // Debounced selective rebuild: coalesces multiple component changes into one pass.
   // Yields event loop between builds so HTTP server stays responsive.
   let _rebuildTimer = null;
   const _dirtyComps = new Set();
-  let _rebuildAllPending = false;
+  const _dirtyPortals = new Set();
 
   // Startup gate: on first process start, Node-RED constructs portal/component nodes
   // sequentially over a window longer than the 50ms debounce. Without gating, an early
@@ -86,7 +93,7 @@ module.exports = function (RED) {
   function _endStartupPhase() {
     if (!_startupPhase) return;
     _startupPhase = false;
-    if (_rebuildAllPending || _dirtyComps.size > 0) {
+    if (_dirtyPortals.size > 0 || _dirtyComps.size > 0) {
       if (_rebuildTimer) { clearTimeout(_rebuildTimer); _rebuildTimer = null; }
       _flushRebuild();
     }
@@ -104,8 +111,9 @@ module.exports = function (RED) {
     if (_rebuildTimer) clearTimeout(_rebuildTimer);
     _rebuildTimer = setTimeout(_flushRebuild, 50);
   }
-  function scheduleRebuildAll() {
-    _rebuildAllPending = true;
+  function scheduleRebuildSelf(nodeId) {
+    if (!nodeId) return;
+    _dirtyPortals.add(nodeId);
     _armRebuild();
   }
   function scheduleRebuildUsing(compName) {
@@ -115,20 +123,22 @@ module.exports = function (RED) {
   }
   function _flushRebuild() {
     _rebuildTimer = null;
-    const all = _rebuildAllPending;
     const dirty = new Set(_dirtyComps);
-    _rebuildAllPending = false;
+    const selfIds = new Set(_dirtyPortals);
     _dirtyComps.clear();
+    _dirtyPortals.clear();
 
-    const targetIds = new Set();
-    for (const nodeId of Object.keys(rebuildCallbacks)) {
-      if (all) { targetIds.add(nodeId); continue; }
-      const used = portalNeeded[nodeId];
-      const raw = portalCode[nodeId] || "";
-      for (const name of dirty) {
-        if ((used && used.has(name)) || raw.includes(name)) {
-          targetIds.add(nodeId);
-          break;
+    const targetIds = new Set(selfIds);
+    if (dirty.size > 0) {
+      for (const nodeId of Object.keys(rebuildCallbacks)) {
+        if (targetIds.has(nodeId)) continue;
+        const used = portalNeeded[nodeId];
+        const raw = portalCode[nodeId] || "";
+        for (const name of dirty) {
+          if ((used && used.has(name)) || raw.includes(name)) {
+            targetIds.add(nodeId);
+            break;
+          }
         }
       }
     }
@@ -300,6 +310,16 @@ module.exports = function (RED) {
     }
 
     const wsPath = nodeRoot + endpoint + "/_ws";
+
+    function updateStatus() {
+      if (isClosing) return;
+      const n = clients.size;
+      node.status({
+        fill: n > 0 ? "green" : "grey",
+        shape: n > 0 ? "dot" : "ring",
+        text: `${endpoint} [${n} client${n !== 1 ? "s" : ""}]`,
+      });
+    }
 
     // ── Rebuild: transpile JSX + update page state ────────────
 
@@ -582,8 +602,32 @@ module.exports = function (RED) {
     // Remember raw user JSX so selective rebuild can detect references to new components
     portalCode[nodeId] = componentCode;
 
-    // Initial build: debounced so all fc-portal-component nodes register first
-    scheduleRebuildAll();
+    // No-op redeploy detection: if nothing in the portal's config changed AND a valid
+    // build already exists for this endpoint, skip rebuild. Node-RED Full deploy
+    // reconstructs every node even when unchanged — without this check every portal
+    // would rebuild on every Full deploy.
+    const sig = hash(
+      [
+        componentCode,
+        JSON.stringify(libs),
+        pageTitle,
+        customHead,
+        String(portalAuth),
+        String(showWsStatus),
+      ].join("\0"),
+    );
+    const prevSig = portalSig[nodeId];
+    const existing = pageState[endpoint];
+    const hasValidBuild =
+      !!existing && !existing.building && !existing.compiled?.error;
+    portalSig[nodeId] = sig;
+
+    if (prevSig !== sig || !hasValidBuild) {
+      scheduleRebuildSelf(nodeId);
+    } else {
+      node.log(`[${nodeId}] unchanged — skipping rebuild`);
+      node.status({ fill: "grey", shape: "ring", text: `${endpoint} [0 clients]` });
+    }
     setImmediate(() => {
       // Register route only once per endpoint (persists across deploys)
       if (!registeredRoutes[endpoint]) {
@@ -849,6 +893,7 @@ module.exports = function (RED) {
         // redeploy we keep it so reconnecting clients still recover.
         if (removed) {
           lastBroadcastCache.delete(endpoint);
+          delete portalSig[nodeId];
         }
 
         // Clear the userIndex — WS clients are already closed above, but
@@ -877,15 +922,6 @@ module.exports = function (RED) {
         } catch (e) { RED.log.trace("[portal-react] wsSend: " + e.message); }
       }
 
-      function updateStatus() {
-        if (isClosing) return;
-        const n = clients.size;
-        node.status({
-          fill: n > 0 ? "green" : "grey",
-          shape: n > 0 ? "dot" : "ring",
-          text: `${endpoint} [${n} client${n !== 1 ? "s" : ""}]`,
-        });
-      }
     }); // end setImmediate
   }
 
