@@ -110,6 +110,7 @@ module.exports = function (RED) {
     if (_startupPhase) return; // gated — _endStartupPhase will flush
     if (_rebuildTimer) clearTimeout(_rebuildTimer);
     _rebuildTimer = setTimeout(_flushRebuild, 50);
+    _rebuildTimer.unref?.();
   }
   function scheduleRebuildSelf(nodeId) {
     if (!nodeId) return;
@@ -313,6 +314,12 @@ module.exports = function (RED) {
 
     function updateStatus() {
       if (isClosing) return;
+      // Preserve error state — don't clobber with client count until JSX is fixed.
+      const st = pageState[endpoint];
+      if (st && st.compiled && st.compiled.error) {
+        node.status({ fill: "red", shape: "dot", text: "transpile error" });
+        return;
+      }
       const n = clients.size;
       node.status({
         fill: n > 0 ? "green" : "grey",
@@ -778,6 +785,19 @@ module.exports = function (RED) {
             wsSend(ws, { type: "recovery", payload: lastBroadcastCache.get(endpoint) });
           }
 
+          // Heartbeat — detect dead sockets via WS ping/pong. Browser
+          // auto-replies to ping frames, no client JS needed.
+          ws._isAlive = true;
+          ws.on("pong", () => { ws._isAlive = true; });
+          ws._pingIv = setInterval(() => {
+            if (ws._isAlive === false) {
+              try { ws.terminate(); } catch (e) { RED.log.trace("[portal-react] ws terminate: " + e.message); }
+              return;
+            }
+            ws._isAlive = false;
+            try { ws.ping(); } catch (e) { RED.log.trace("[portal-react] ws ping: " + e.message); }
+          }, 30000);
+
           ws.on("message", (raw) => {
             try {
               const msg = JSON.parse(raw.toString());
@@ -806,6 +826,7 @@ module.exports = function (RED) {
           });
 
           const detach = () => {
+            if (ws._pingIv) { clearInterval(ws._pingIv); ws._pingIv = null; }
             clients.delete(portalClient);
             if (userId) {
               const set = userIndex.get(userId);
@@ -863,8 +884,10 @@ module.exports = function (RED) {
           delete upgradeHandlers[nodeId];
         }
 
-        // Close all WS clients
+        // Close all WS clients — clear heartbeat interval BEFORE ws.close()
+        // so pending pings do not leak if the 'close' event is delayed.
         clients.forEach((ws) => {
+          if (ws._pingIv) { clearInterval(ws._pingIv); ws._pingIv = null; }
           try {
             ws.close(1001, "node redeployed");
           } catch (e) { RED.log.trace("[portal-react] ws close client: " + e.message); }
@@ -899,6 +922,17 @@ module.exports = function (RED) {
         // Clear the userIndex — WS clients are already closed above, but
         // the Map itself should not outlive the node instance.
         userIndex.clear();
+
+        // Break references to large objects / Promises in pageState even on
+        // redeploy. Next rebuild overwrites pageState[endpoint] anyway, but
+        // between close and the new build these would retain closures over
+        // the old clients/userIndex/rebuild scope.
+        const st = pageState[endpoint];
+        if (st) {
+          st.cssReady = null;
+          st.compiled = null;
+          st.css = null;
+        }
 
         // Clean up route only when node is fully removed (not redeployed)
         if (removed) {
