@@ -160,6 +160,7 @@ module.exports = function (RED) {
   const {
     hash,
     transpile,
+    quickCheckSyntax,
     generateCSS,
     extractPortalUser,
     removeRoute,
@@ -216,9 +217,16 @@ module.exports = function (RED) {
 
     const newCode = config.compCode || "";
     const prevCode = registry[compName]?.code;
-    registry[compName] = { code: newCode };
+    const syntaxErr = quickCheckSyntax(newCode);
+    registry[compName] = { code: newCode, error: syntaxErr };
 
-    node.status({ fill: "green", shape: "dot", text: compName });
+    if (syntaxErr) {
+      node.error(`Component "${compName}" syntax error: ${syntaxErr}`);
+      const short = syntaxErr.split("\n")[0].slice(0, 40);
+      node.status({ fill: "red", shape: "dot", text: "syntax: " + short });
+    } else {
+      node.status({ fill: "green", shape: "dot", text: compName });
+    }
 
     // Only rebuild portals that reference this component, and only if the code actually changed.
     if (prevCode !== newCode) {
@@ -314,17 +322,49 @@ module.exports = function (RED) {
 
     function updateStatus() {
       if (isClosing) return;
-      // Preserve error state — don't clobber with client count until JSX is fixed.
       const st = pageState[endpoint];
+      const n = clients.size;
+      const clientTail = n > 0 ? ` [${n} client${n !== 1 ? "s" : ""}]` : "";
+
+      // Preserve build-error state — don't clobber with client count until JSX is fixed.
+      // Show "(serving last good)" suffix in degraded mode (ring shape) so it is
+      // obvious the portal still works for connected clients despite the broken build.
       if (st && st.compiled && st.compiled.error) {
-        node.status({ fill: "red", shape: "dot", text: "transpile error" });
+        let base;
+        if (st.errorSource) base = "broken: " + st.errorSource;
+        else if (st.errorKind === "missing-return") base = "missing return";
+        else if (st.errorKind === "rebuild") base = "rebuild error";
+        else base = "transpile error";
+        if (st.lastGood) {
+          node.status({
+            fill: "red",
+            shape: "ring",
+            text: base + " (serving last good)" + clientTail,
+          });
+        } else {
+          node.status({ fill: "red", shape: "dot", text: base + clientTail });
+        }
         return;
       }
-      const n = clients.size;
+      // Preserve building state — same reason.
+      if (st && st.building) {
+        node.status({ fill: "yellow", shape: "dot", text: "building..." });
+        return;
+      }
+      // Build succeeded but a connected browser threw at runtime
+      // (e.g. ReferenceError to a missing component / undefined identifier).
+      if (st && st.runtimeError) {
+        node.status({
+          fill: "red",
+          shape: "ring",
+          text: "runtime error" + clientTail,
+        });
+        return;
+      }
       node.status({
         fill: n > 0 ? "green" : "grey",
         shape: n > 0 ? "dot" : "ring",
-        text: `${endpoint} [${n} client${n !== 1 ? "s" : ""}]`,
+        text: `${endpoint}${clientTail || " [0 clients]"}`,
       });
     }
 
@@ -332,8 +372,6 @@ module.exports = function (RED) {
 
     function rebuild() {
       try {
-        node.status({ fill: "yellow", shape: "dot", text: "building..." });
-
         // ── Pre-build: clear cache, set building state, notify browsers ──
         const prevState = pageState[endpoint];
         const prevHash = prevState?.jsxHash;
@@ -341,6 +379,7 @@ module.exports = function (RED) {
           deleteCacheFiles(prevHash);
         }
         pageState[endpoint] = { building: true, wsPath, pageTitle };
+        updateStatus();
         clients.forEach((ws) => {
           try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "building" })); } catch (e) { RED.log.trace("[portal-react] ws send building: " + e.message); }
         });
@@ -458,7 +497,19 @@ module.exports = function (RED) {
           "createRoot(document.getElementById('root')).render(React.createElement(App));",
         ].join("\n");
 
+        const jsxHash = hash(fullJsx);
+
+        // ── Check: any used component has its own syntax error ──
+        let errorSource = null;
+        for (const name of needed) {
+          if (registry[name]?.error) {
+            errorSource = name;
+            break;
+          }
+        }
+
         // ── Check: missing return in App ──
+        let missingReturn = false;
         const appFnMatch = cleanCompCode.match(/function\s+App\s*\([^)]*\)\s*\{/);
         if (appFnMatch) {
           let depth = 1, i = appFnMatch.index + appFnMatch[0].length;
@@ -470,54 +521,47 @@ module.exports = function (RED) {
             else if (cleanCompCode.slice(i, i + 7) === "return ") hasReturn = true;
             i++;
           }
-          if (!hasReturn) {
-            node.error("App component has no return statement");
-            node.status({ fill: "red", shape: "dot", text: "missing return" });
-            const missingReturnError = {
-              js: null,
-              error: "App component has no return statement.\n\nAdd a return with JSX, e.g.:\n\nfunction App() {\n  return <div>Hello</div>\n}",
-            };
-            pageState[endpoint] = {
-              compiled: missingReturnError,
-              contentHash: "",
-              cssReady: Promise.resolve({ css: "", cssHash: "" }),
-              jsxHash: "",
-              css: null,
-              cssHash: "",
-              pageTitle,
-              wsPath,
-              customHead,
-              portalAuth,
-              showWsStatus,
-            };
-            clients.forEach((ws) => {
-              try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: missingReturnError.error })); } catch (e) { RED.log.trace("[portal-react] ws send error frame: " + e.message); }
-            });
-            return;
-          }
+          missingReturn = !hasReturn;
         }
 
-        const jsxHash = hash(fullJsx);
-
-        // ── JS: disk cache → transpile ──
-        let compiled = readCachedJS(jsxHash);
-        let cacheHit = !!compiled;
-        if (!compiled) {
-          compiled = transpile(fullJsx);
-          if (!compiled.error) {
-            writeCachedJS(jsxHash, compiled.js, compiled.metafile);
+        // ── Resolve compiled (success or unified error) ──
+        let compiled;
+        let cacheHit = false;
+        let errorKind = null; // 'component' | 'missing-return' | 'transpile'
+        if (errorSource) {
+          compiled = {
+            js: null,
+            error: `Component "${errorSource}" has a syntax error:\n\n${registry[errorSource].error}`,
+          };
+          errorKind = "component";
+        } else if (missingReturn) {
+          compiled = {
+            js: null,
+            error:
+              "App component has no return statement.\n\nAdd a return with JSX, e.g.:\n\nfunction App() {\n  return <div>Hello</div>\n}",
+          };
+          errorKind = "missing-return";
+        } else {
+          compiled = readCachedJS(jsxHash);
+          cacheHit = !!compiled;
+          if (!compiled) {
+            compiled = transpile(fullJsx);
+            if (!compiled.error) {
+              writeCachedJS(jsxHash, compiled.js, compiled.metafile);
+            }
           }
+          if (compiled.error) errorKind = "transpile";
         }
 
         if (compiled.error) {
-          node.error("JSX transpile error: " + compiled.error);
-          RED.log.warn(
-            `[portal-react] ${endpoint} — JSX transpile error: ${compiled.error}`,
+          node.error(
+            (errorKind === "component"
+              ? `Component "${errorSource}" syntax error: `
+              : errorKind === "missing-return"
+              ? "App component has no return statement: "
+              : "JSX transpile error: ") + compiled.error,
           );
-          node.status({ fill: "red", shape: "dot", text: "transpile error" });
-          clients.forEach((ws) => {
-            try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message: compiled.error })); } catch (e) { RED.log.trace("[portal-react] ws send transpile error: " + e.message); }
-          });
+          // Status + WS frames handled below (lastGood-aware).
         } else {
           updateStatus();
           if (compiled.metafile) {
@@ -568,6 +612,12 @@ module.exports = function (RED) {
 
         lastJsxHash = jsxHash;
 
+        // Preserve last successful build so that on transpile errors we keep
+        // serving the previous working JS instead of throwing clients to an error page.
+        const lastGood = compiled.error
+          ? prevState?.lastGood || null
+          : null; // will be populated after cssReady resolves on success
+
         pageState[endpoint] = {
           compiled,
           contentHash,
@@ -580,7 +630,23 @@ module.exports = function (RED) {
           customHead,
           portalAuth,
           showWsStatus,
+          errorSource,
+          errorKind,
+          lastGood,
         };
+
+        if (compiled.error) {
+          // Status text (red) handled centrally by updateStatus — it formats
+          // base + "(serving last good)" + client-count suffix consistently
+          // across build and connect/disconnect events.
+          updateStatus();
+          const frame = lastGood
+            ? JSON.stringify({ type: "error", message: compiled.error, degraded: true })
+            : JSON.stringify({ type: "error", message: compiled.error });
+          clients.forEach((ws) => {
+            try { if (ws.readyState === 1) ws.send(frame); } catch (e) { RED.log.trace("[portal-react] ws send error: " + e.message); }
+          });
+        }
 
         // Notify all connected browsers that build finished — triggers reload or overlay cleanup
         if (!compiled.error && contentHash) {
@@ -595,12 +661,49 @@ module.exports = function (RED) {
           if (state && state.jsxHash === jsxHash) {
             state.css = css;
             state.cssHash = cssHash;
+            // Snapshot current good build so future failed builds can fall back.
+            if (!state.compiled.error && state.compiled.js) {
+              state.lastGood = {
+                compiledJs: state.compiled.js,
+                contentHash: state.contentHash,
+                cssHash,
+                pageTitle: state.pageTitle,
+                customHead: state.customHead,
+              };
+            }
             updateStatus();
           }
         });
       } catch (e) {
         node.error("Rebuild failed: " + e.message);
-        node.status({ fill: "red", shape: "dot", text: "rebuild error" });
+        // Surface as a regular build error so the lastGood/degraded path,
+        // status formatting and FE error frame all run uniformly.
+        const prev = pageState[endpoint];
+        pageState[endpoint] = {
+          compiled: { js: null, error: "Internal rebuild error: " + e.message },
+          contentHash: "",
+          cssReady: Promise.resolve({ css: "", cssHash: "" }),
+          jsxHash: "",
+          css: null,
+          cssHash: "",
+          pageTitle,
+          wsPath,
+          customHead,
+          portalAuth,
+          showWsStatus,
+          errorSource: null,
+          errorKind: "rebuild",
+          lastGood: prev?.lastGood || null,
+        };
+        updateStatus();
+        const frame = JSON.stringify({
+          type: "error",
+          message: "Internal rebuild error: " + e.message,
+          degraded: !!prev?.lastGood,
+        });
+        clients.forEach((ws) => {
+          try { if (ws.readyState === 1) ws.send(frame); } catch (err) { RED.log.trace("[portal-react] ws send rebuild err: " + err.message); }
+        });
       }
     }
 
@@ -633,7 +736,7 @@ module.exports = function (RED) {
       scheduleRebuildSelf(nodeId);
     } else {
       node.log(`[${nodeId}] unchanged — skipping rebuild`);
-      node.status({ fill: "grey", shape: "ring", text: `${endpoint} [0 clients]` });
+      updateStatus();
     }
     setImmediate(() => {
       // Register route only once per endpoint (persists across deploys)
@@ -645,15 +748,35 @@ module.exports = function (RED) {
               const bWsPath = state?.wsPath || wsPath;
               res
                 .set("Cache-Control", "no-store")
-                .set("Refresh", "3")
                 .type("text/html")
                 .send(
-                  `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Building\u2026</title><style>@keyframes __sp{to{transform:rotate(360deg)}}body{font-family:monospace;background:#111;color:#888;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}</style></head><body><div style="font-size:24px;margin-bottom:16px">Building\u2026</div><div style="width:40px;height:40px;border:3px solid #333;border-top-color:#888;border-radius:50%;animation:__sp .8s linear infinite"></div><script>(function(){var r=0;function c(){var p=location.protocol==='https:'?'wss:':'ws:';var ws=new WebSocket(p+'//'+location.host+'${bWsPath}');ws.onmessage=function(e){try{var m=JSON.parse(e.data);if(m.type==='version'||m.type==='error')location.reload();}catch(_){}};ws.onclose=function(){var d=Math.min(500*Math.pow(2,r),8000);r++;setTimeout(c,d);};ws.onerror=function(){ws.close();};}c();})()</script></body></html>`,
+                  `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Building\u2026</title><style>@keyframes __sp{to{transform:rotate(360deg)}}body{font-family:monospace;background:#111;color:#888;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}</style></head><body><div style="font-size:24px;margin-bottom:16px">Building\u2026</div><div style="width:40px;height:40px;border:3px solid #333;border-top-color:#888;border-radius:50%;animation:__sp .8s linear infinite"></div><script>(function(){var r=0;function c(){var p=location.protocol==='https:'?'wss:':'ws:';var ws=new WebSocket(p+'//'+location.host+'${bWsPath}');ws.onmessage=function(e){try{var m=JSON.parse(e.data);if((m.type==='version'&&m.hash)||m.type==='error')location.reload();}catch(_){}};ws.onclose=function(){var d=Math.min(500*Math.pow(2,r),8000);r++;setTimeout(c,d);};ws.onerror=function(){ws.close();};}c();})()</script></body></html>`,
                 );
               return;
             }
             res.set("Cache-Control", "no-store");
             if (state.compiled.error) {
+              if (state.lastGood) {
+                // Degraded: serve previous good build, banner-only error UI.
+                const user = state.portalAuth
+                  ? extractPortalUser(_req.headers)
+                  : null;
+                res
+                  .type("text/html")
+                  .send(
+                    buildPage(
+                      state.lastGood.pageTitle,
+                      state.lastGood.compiledJs,
+                      state.wsPath,
+                      state.lastGood.customHead,
+                      state.lastGood.cssHash,
+                      user,
+                      state.showWsStatus,
+                      adminRoot,
+                    ),
+                  );
+                return;
+              }
               res
                 .status(500)
                 .type("text/html")
@@ -770,12 +893,27 @@ module.exports = function (RED) {
 
           updateStatus();
 
-          // Send content version for deploy-reload detection
-          const contentHash = pageState[endpoint]?.contentHash || "";
+          // Send content version for deploy-reload detection.
+          // In degraded mode (current build failed but lastGood served), advertise
+          // the lastGood hash so the freshly reloaded client matches the JS we sent.
+          const cs = pageState[endpoint];
+          const contentHash =
+            cs?.compiled?.error && cs?.lastGood
+              ? cs.lastGood.contentHash
+              : cs?.contentHash || "";
           wsSend(ws, { type: "version", hash: contentHash });
 
           // Send assigned portalClient to browser
           wsSend(ws, { type: "hello", portalClient });
+
+          // Degraded warning — show banner, not full overlay.
+          if (cs?.compiled?.error && cs?.lastGood) {
+            wsSend(ws, {
+              type: "error",
+              message: cs.compiled.error,
+              degraded: true,
+            });
+          }
 
           // Send the cached last broadcast (if any) as a distinct
           // `recovery` frame. The browser uses this to seed `data` on a
@@ -801,6 +939,21 @@ module.exports = function (RED) {
           ws.on("message", (raw) => {
             try {
               const msg = JSON.parse(raw.toString());
+              if (msg.type === "runtime_error") {
+                // Browser caught an exception while running the bundle —
+                // surface it on node status so the editor shows red even
+                // when the build itself succeeded (e.g. ReferenceError to
+                // an undefined identifier or missing component).
+                const st = pageState[endpoint];
+                if (st && !(st.compiled && st.compiled.error)) {
+                  st.runtimeError = String(msg.message || "")
+                    .split("\n")[0]
+                    .slice(0, 200);
+                  node.error("Runtime error in browser: " + st.runtimeError);
+                  updateStatus();
+                }
+                return;
+              }
               if (msg.type === "output") {
                 let out = {
                   payload: msg.payload,

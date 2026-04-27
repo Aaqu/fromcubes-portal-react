@@ -121,12 +121,42 @@ function removeRoute(router, path) {
   );
 }
 
+function formatEsbuildError(e) {
+  return e.errors?.length
+    ? e.errors
+        .map(
+          (err) =>
+            `${err.text}${err.location ? ` (line ${err.location.line})` : ""}`,
+        )
+        .join("\n")
+    : e.message;
+}
+
+// Fast JSX syntax validation (no bundling). Returns null on OK, error string on fail.
+function quickCheckSyntax(jsx) {
+  if (!jsx || !jsx.trim()) return null;
+  try {
+    esbuild.transformSync(jsx, {
+      loader: "jsx",
+      jsx: "transform",
+      jsxFactory: "React.createElement",
+      jsxFragment: "React.Fragment",
+      logLevel: "silent",
+    });
+    return null;
+  } catch (e) {
+    return formatEsbuildError(e);
+  }
+}
+
 module.exports = function (RED) {
   return createHelpers(RED);
 };
 
 module.exports.validateSubPath = validateSubPath;
 module.exports.isSafeName = isSafeName;
+module.exports.quickCheckSyntax = quickCheckSyntax;
+module.exports.formatEsbuildError = formatEsbuildError;
 
 function createHelpers(RED) {
   // Package root — where react/react-dom live (this package's own node_modules)
@@ -220,25 +250,8 @@ function createHelpers(RED) {
 
   function transpile(jsx) {
     // Pre-validate with transformSync (fast, no bundling) to avoid esbuild buildSync deadlock on syntax errors
-    try {
-      esbuild.transformSync(jsx, {
-        loader: "jsx",
-        jsx: "transform",
-        jsxFactory: "React.createElement",
-        jsxFragment: "React.Fragment",
-        logLevel: "silent",
-      });
-    } catch (e) {
-      const msg = e.errors?.length
-        ? e.errors
-            .map(
-              (err) =>
-                `${err.text}${err.location ? ` (line ${err.location.line})` : ""}`,
-            )
-            .join("\n")
-        : e.message;
-      return { js: null, error: msg };
-    }
+    const syntaxErr = quickCheckSyntax(jsx);
+    if (syntaxErr) return { js: null, error: syntaxErr };
     // Syntax OK — bundle with full resolution
     try {
       const buildResult = esbuild.buildSync({
@@ -275,21 +288,14 @@ function createHelpers(RED) {
         error: null,
       };
     } catch (e) {
-      const msg = e.errors?.length
-        ? e.errors
-            .map(
-              (err) =>
-                `${err.text}${err.location ? ` (line ${err.location.line})` : ""}`,
-            )
-            .join("\n")
-        : e.message;
-      return { js: null, error: msg };
+      return { js: null, error: formatEsbuildError(e) };
     }
   }
 
   return {
     hash,
     transpile,
+    quickCheckSyntax,
     generateCSS,
     extractPortalUser,
     removeRoute,
