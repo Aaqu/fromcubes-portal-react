@@ -1,0 +1,72 @@
+[
+  {
+    "id": "fc-util-flow",
+    "type": "tab",
+    "label": "Utility: useDebounce",
+    "disabled": false
+  },
+  {
+    "id": "fc-util-tick",
+    "type": "inject",
+    "z": "fc-util-flow",
+    "name": "Fast tick (10Hz)",
+    "props": [{ "p": "payload" }],
+    "repeat": "0.1",
+    "payload": "",
+    "payloadType": "date",
+    "x": 160,
+    "y": 160,
+    "wires": [["fc-util-noisy"]]
+  },
+  {
+    "id": "fc-util-noisy",
+    "type": "function",
+    "z": "fc-util-flow",
+    "name": "Noisy signal",
+    "func": "// Random walk between 0..120 with bursts of noise — exactly the sort of\n// fast-changing input where a debounced display is much more readable\n// than the raw value.\nconst prev = context.get('v') ?? 50;\nconst drift = (Math.random() - 0.5) * 8;\nconst noise = Math.random() < 0.15 ? (Math.random() - 0.5) * 30 : 0;\nconst v = Math.max(0, Math.min(120, prev + drift + noise));\ncontext.set('v', v);\nmsg.payload = { value: +v.toFixed(2), ts: Date.now() };\nreturn msg;",
+    "outputs": 1,
+    "x": 360,
+    "y": 160,
+    "wires": [["fc-util-portal"]]
+  },
+  {
+    "id": "fc-util-helpers",
+    "type": "fc-portal-utility",
+    "z": "fc-util-flow",
+    "name": "math helpers + useDebounce",
+    "utilName": "mathHelpers",
+    "utilCode": "// Constants — bundled once, shared across portals that reference them.\nconst CLAMP_MIN = 0;\nconst CLAMP_MAX = 100;\n\n// Pure helper.\nfunction clamp(n, min, max) {\n  return Math.max(min, Math.min(max, n));\n}\n\n// Custom React hook — name MUST start with `use` for React's rules of hooks.\n// This node groups a constant + a helper + a hook in one block; portals that\n// reference any of `clamp`, `useDebounce`, `CLAMP_MIN`, `CLAMP_MAX` pull in\n// the whole node.\nfunction useDebounce(value, ms = 300) {\n  const [v, setV] = React.useState(value);\n  React.useEffect(() => {\n    const t = setTimeout(() => setV(value), ms);\n    return () => clearTimeout(t);\n  }, [value, ms]);\n  return v;\n}",
+    "x": 160,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "fc-util-bar",
+    "type": "fc-portal-component",
+    "z": "fc-util-flow",
+    "name": "Bar",
+    "compName": "Bar",
+    "compCode": "function Bar({ value = 0, label = '' }) {\n  // Component uses `clamp` from the utility node — selective inclusion picks\n  // up the dependency through the components' code, not just the user JSX.\n  const pct = clamp(value, CLAMP_MIN, CLAMP_MAX);\n  const color = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-amber-500' : 'bg-emerald-500';\n  return (\n    <div className=\"flex items-center gap-3\">\n      <div className=\"w-24 text-xs text-zinc-400 uppercase tracking-wider\">{label}</div>\n      <div className=\"flex-1 h-3 bg-zinc-800 rounded-full overflow-hidden\">\n        <div className={`h-full ${color} transition-all duration-150`} style={{ width: pct + '%' }} />\n      </div>\n      <div className=\"w-14 text-right font-mono text-sm tabular-nums text-zinc-200\">\n        {value.toFixed(1)}\n      </div>\n    </div>\n  );\n}",
+    "compInputs": "value,label",
+    "compOutputs": "",
+    "x": 360,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "fc-util-portal",
+    "type": "portal-react",
+    "z": "fc-util-flow",
+    "name": "Debounce demo",
+    "subPath": "debounce",
+    "pageTitle": "useDebounce demo",
+    "customHead": "",
+    "componentCode": "function App() {\n  const { data } = useNodeRed();\n  const raw = data?.value ?? 0;\n\n  // Live raw signal vs debounced views at three different windows.\n  // `useDebounce` is declared in the fc-portal-utility node — no import.\n  const slow100 = useDebounce(raw, 100);\n  const slow400 = useDebounce(raw, 400);\n  const slow1500 = useDebounce(raw, 1500);\n\n  return (\n    <div className=\"min-h-screen bg-zinc-950 text-zinc-100 p-8 font-sans\">\n      <h1 className=\"text-2xl font-light text-amber-400 mb-2\">useDebounce</h1>\n      <p className=\"text-sm text-zinc-500 mb-8\">\n        Custom hook from <code className=\"text-amber-300\">fc-portal-utility</code>. Same noisy 10 Hz input fed through different debounce windows.\n      </p>\n      <div className=\"max-w-xl space-y-4\">\n        <Bar value={raw} label=\"raw\" />\n        <Bar value={slow100} label=\"100 ms\" />\n        <Bar value={slow400} label=\"400 ms\" />\n        <Bar value={slow1500} label=\"1500 ms\" />\n      </div>\n    </div>\n  );\n}",
+    "libs": [],
+    "portalAuth": false,
+    "showWsStatus": false,
+    "x": 580,
+    "y": 160,
+    "wires": [[]]
+  }
+]

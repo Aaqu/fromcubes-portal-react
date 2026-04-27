@@ -454,6 +454,68 @@
       }
       refreshComponentNames();
 
+      // Fetch utility nodes + their parsed top-level symbols.
+      // Window cache shape: { byNode: { utilName: [symbol, ...] }, allSymbols: [..] }
+      window.__fcRefreshUtilities = function () {
+        $.getJSON("portal-react/utilities", function (reg) {
+          const byNode = {};
+          const all = new Set();
+          Object.keys(reg).forEach(function (n) {
+            const syms = reg[n].symbols || [];
+            byNode[n] = syms;
+            syms.forEach(function (s) { all.add(s); });
+          });
+          window.__fcUtilities = { byNode: byNode, allSymbols: [...all] };
+          console.log(
+            PREFIX,
+            "utilities loaded: " + Object.keys(byNode).length + " nodes, " + all.size + " symbols",
+          );
+        }).fail(function () {
+          window.__fcUtilities = { byNode: {}, allSymbols: [] };
+        });
+      };
+      window.__fcRefreshUtilities();
+
+      // Utility-symbol completion: suggests bare identifiers anywhere in JS
+      // context EXCEPT after "<" (that's JSX tag completion, handled below).
+      monaco.languages.registerCompletionItemProvider("javascript", {
+        triggerCharacters: ["."], // jQuery-ish — but we mostly fire from word context
+        provideCompletionItems: function (model, position) {
+          const line = model.getLineContent(position.lineNumber);
+          const before = line.substring(0, position.column - 1);
+          // Skip JSX tag context — covered by other providers
+          if (/<[a-zA-Z]*$/.test(before)) return { suggestions: [] };
+          // Skip property access — let Monaco's language service handle it
+          if (/\.\s*\w*$/.test(before)) return { suggestions: [] };
+          // Skip inside strings
+          if (/["'`][^"'`]*$/.test(before)) return { suggestions: [] };
+          const wordMatch = before.match(/([A-Za-z_$][\w$]*)$/);
+          const word = wordMatch ? wordMatch[1] : "";
+          const all = (window.__fcUtilities && window.__fcUtilities.allSymbols) || [];
+          if (!all.length) return { suggestions: [] };
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: position.column - word.length,
+            endColumn: position.column,
+          };
+          const suggestions = [];
+          for (let i = 0; i < all.length; i++) {
+            const sym = all[i];
+            if (word && sym.indexOf(word) !== 0) continue;
+            suggestions.push({
+              label: sym,
+              kind: monaco.languages.CompletionItemKind.Function,
+              insertText: sym,
+              range: range,
+              detail: "fc-portal-utility",
+              sortText: "1" + sym,
+            });
+          }
+          return { suggestions: suggestions };
+        },
+      });
+
       // Marker listener for debugging
       monaco.editor.onDidChangeMarkers(function (uris) {
         uris.forEach(function (uri) {
@@ -773,6 +835,198 @@
 </script>
 
 <!-- ============================================================
+     fc-portal-utility – canvas node (helpers / hooks / constants)
+     ============================================================ -->
+<script type="text/html" data-template-name="fc-portal-utility">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Label on canvas" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-utilName"><i class="fa fa-wrench"></i> Module name</label>
+    <input type="text" id="node-input-utilName" placeholder="mathHelpers" />
+  </div>
+  <div class="form-row" style="margin-bottom:4px;">
+    <label><i class="fa fa-code"></i> Code</label>
+    <div style="font-size:11px;opacity:.5;margin-top:2px;">
+      Top-level helpers, custom hooks and constants. Available globally to portals
+      that reference any of the symbols declared here.
+    </div>
+  </div>
+  <div class="form-row node-text-editor-row">
+    <div
+      id="fcu-editor-wrap"
+      style="width:100%;height:350px;border:1px solid var(--red-ui-form-input-border-color,#555);border-radius:4px;overflow:hidden;position:relative;"
+    >
+      <div id="fcu-monaco" style="width:100%;height:100%;"></div>
+      <textarea
+        id="fcu-fallback"
+        style="display:none;width:100%;height:100%;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;background:#1e1e1e;color:#d4d4d4;border:none;padding:12px;resize:none;"
+      ></textarea>
+    </div>
+  </div>
+  <input type="hidden" id="node-input-utilCode" />
+</script>
+
+<script type="text/javascript">
+  (function () {
+    let utilEditorInstance = null;
+
+    const UTIL_STARTER = [
+      "// Helpers / custom hooks / constants — top-level, no React component.",
+      "// Each symbol declared here is available globally in any portal that",
+      "// references it (selective inclusion: unused utility nodes are skipped).",
+      "",
+      "const PI2 = Math.PI * 2;",
+      "",
+      "function clamp(n, min, max) {",
+      "  return Math.max(min, Math.min(max, n));",
+      "}",
+      "",
+      "// Custom React hook — call from inside App() or library components",
+      "function useDebounce(value, ms = 300) {",
+      "  const [v, setV] = React.useState(value);",
+      "  React.useEffect(() => {",
+      "    const t = setTimeout(() => setV(value), ms);",
+      "    return () => clearTimeout(t);",
+      "  }, [value, ms]);",
+      "  return v;",
+      "}",
+    ].join("\n");
+
+    RED.nodes.registerType("fc-portal-utility", {
+      category: "fromcubes",
+      color: "#fbbf24",
+      defaults: {
+        name: { value: "" },
+        utilName: { value: "myHelpers", required: true },
+        utilCode: { value: UTIL_STARTER },
+      },
+      inputs: 0,
+      outputs: 0,
+      icon: "font-awesome/fa-wrench",
+      paletteLabel: "fromcubes utility",
+      label: function () {
+        return this.name || this.utilName || "utility";
+      },
+
+      oneditprepare: function () {
+        const node = this;
+        const code = node.utilCode || UTIL_STARTER;
+        console.log("[FC-Monaco] UTIL oneditprepare, node.id=" + node.id);
+
+        if (!window.__fcTwClasses) {
+          $.getJSON("portal-react/tw-classes", function (classes) {
+            window.__fcTwClasses = classes;
+          });
+        }
+
+        window.__fcLoadMonaco(function (failed) {
+          if (failed) {
+            $("#fcu-monaco").hide();
+            $("#fcu-fallback").show().val(code);
+            return;
+          }
+          window.__fcApplyJsxDefaults();
+
+          const utilUri = monaco.Uri.parse("file:///fc-util-" + node.id + ".js");
+          const existingModel = monaco.editor.getModel(utilUri);
+          if (existingModel) existingModel.dispose();
+          const utilModel = monaco.editor.createModel(code, "javascript", utilUri);
+
+          utilEditorInstance = monaco.editor.create(
+            document.getElementById("fcu-monaco"),
+            Object.assign({ model: utilModel }, window.__fcEditorOpts),
+          );
+        });
+      },
+
+      oneditsave: function () {
+        const code = utilEditorInstance
+          ? utilEditorInstance.getValue()
+          : $("#fcu-fallback").val();
+        $("#node-input-utilCode").val(code);
+        this.utilCode = code;
+        if (utilEditorInstance) {
+          utilEditorInstance.getModel().dispose();
+          utilEditorInstance.dispose();
+          utilEditorInstance = null;
+        }
+      },
+
+      oneditcancel: function () {
+        if (utilEditorInstance) {
+          utilEditorInstance.getModel().dispose();
+          utilEditorInstance.dispose();
+          utilEditorInstance = null;
+        }
+      },
+
+      oneditresize: function (size) {
+        let h = size.height - 200;
+        if (h < 150) h = 150;
+        $("#fcu-editor-wrap").css("height", h + "px");
+        if (utilEditorInstance) utilEditorInstance.layout();
+      },
+    });
+  })();
+</script>
+
+<script type="text/html" data-help-name="fc-portal-utility">
+  <p>
+    Defines shared <strong>helpers</strong>, <strong>custom hooks</strong> and
+    <strong>constants</strong> available to all <strong>portal-react</strong>
+    nodes. Unlike <code>fc-portal-component</code>, the code is injected raw at
+    top level (no IIFE wrapper) — a single utility node may declare many symbols.
+  </p>
+  <h3>Properties</h3>
+  <dl>
+    <dt>Module name</dt>
+    <dd>
+      Identifier for this utility node. Shares a namespace with
+      <code>fc-portal-component</code> names — must be unique across all
+      components and utilities.
+    </dd>
+    <dt>Code</dt>
+    <dd>
+      Top-level JavaScript: <code>const</code>, <code>let</code>,
+      <code>function</code>, <code>class</code> declarations. <code>import</code>
+      statements at the top are auto-hoisted into the bundle.
+    </dd>
+  </dl>
+  <h3>Selective inclusion</h3>
+  <p>
+    A utility node is bundled into a portal only when the portal's JSX (or any
+    of its referenced library components) mentions at least one of the symbols
+    declared in the utility. Unused utility nodes are skipped.
+  </p>
+  <p>
+    Group related symbols in one node — referencing any one symbol pulls in the
+    whole node's code. Split unrelated helpers across multiple nodes for finer
+    granularity.
+  </p>
+  <h3>Example</h3>
+  <pre>function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+function useDebounce(value, ms = 300) {
+  const [v, setV] = React.useState(value);
+  React.useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}</pre>
+  <p>
+    Then in any <strong>portal-react</strong> node:
+  </p>
+  <pre>function App() {
+  const { data } = useNodeRed();
+  const slow = useDebounce(data?.value);
+  return &lt;div&gt;{clamp(slow ?? 0, 0, 100)}&lt;/div&gt;;
+}</pre>
+</script>
+
+<!-- ============================================================
      portal-react – main node
      ============================================================ -->
 <script type="text/html" data-template-name="portal-react">
@@ -801,6 +1055,9 @@
         </button>
         <button type="button" class="red-ui-button" id="fc-btn-components">
           <i class="fa fa-cube"></i> Components
+        </button>
+        <button type="button" class="red-ui-button" id="fc-btn-utilities">
+          <i class="fa fa-wrench"></i> Utilities
         </button>
         <span style="flex:1"></span>
         <button type="button" class="red-ui-button" id="fc-btn-preview">
@@ -1295,6 +1552,118 @@
                 ta.value = v.slice(0, s) + text + v.slice(e);
                 setTimeout(function () {
                   ta.selectionStart = ta.selectionEnd = s + openTag.length;
+                  ta.focus();
+                }, 50);
+              }
+            });
+          });
+        });
+
+        $("#fc-btn-utilities").on("click", function () {
+          $.getJSON("portal-react/utilities", function (reg) {
+            // Refresh global cache too so completion provider picks up changes
+            if (window.__fcRefreshUtilities) window.__fcRefreshUtilities();
+            const names = Object.keys(reg).sort();
+            if (!names.length) {
+              RED.notify("No utility nodes on canvas.", "warning");
+              return;
+            }
+
+            let html =
+              '<div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">' +
+              '<input type="text" id="fc-util-search" placeholder="Search..." ' +
+              'style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;border:1px solid rgba(128,128,128,.4);border-radius:3px;' +
+              'background:var(--red-ui-form-input-background-color,#fff);color:var(--red-ui-form-text-color,#333);font-size:12px;flex-shrink:0;" />' +
+              '<div id="fc-util-list" style="flex:1;overflow-y:auto;">';
+
+            names.forEach(function (n) {
+              const u = reg[n];
+              const syms = u.symbols || [];
+              const errBadge = u.error
+                ? '<span style="margin-left:6px;font-size:10px;color:#ef4444;" title="' +
+                  String(u.error).replace(/"/g, "&quot;") + '">syntax error</span>'
+                : "";
+              const symBadges = syms.map(function (s) {
+                return '<span class="fc-util-sym" data-sym="' + s +
+                  '" style="display:inline-block;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.35);' +
+                  'padding:1px 6px;border-radius:3px;margin:2px 4px 2px 0;font-size:11px;font-family:monospace;cursor:pointer;">' +
+                  s + '</span>';
+              }).join("");
+              const detail = syms.length
+                ? '<div style="margin:4px 0 0 0;">' + symBadges + '</div>'
+                : '<div style="margin:4px 0 0 0;font-size:11px;opacity:.5;">(no top-level symbols detected)</div>';
+              const searchKey = (n + " " + syms.join(" ")).toLowerCase();
+
+              html +=
+                '<div class="fc-util-item" data-name="' + n + '" data-search="' + searchKey + '" ' +
+                'style="border-bottom:1px solid rgba(128,128,128,.1);">' +
+                '<div style="display:flex;align-items:center;padding:4px 6px;cursor:pointer;" class="fc-util-row">' +
+                '<i class="fa fa-caret-right fc-util-arrow" style="width:14px;opacity:.4;font-size:12px;transition:transform .15s;"></i>' +
+                '<i class="fa fa-wrench" style="width:14px;color:#fbbf24;font-size:11px;"></i>' +
+                '<span style="font-weight:600;font-size:12px;flex:1;margin-left:4px;">' + n + '</span>' +
+                errBadge +
+                '</div>' +
+                '<div class="fc-util-detail" style="display:none;padding:0 6px 6px 32px;">' + detail + '</div>' +
+                '</div>';
+            });
+            html += '</div></div>';
+
+            const $dlg = $("<div></div>").html(html).dialog({
+              title: "Utilities",
+              modal: true,
+              width: 420,
+              buttons: [
+                { text: "Close", click: function () { $(this).dialog("close"); } },
+              ],
+              close: function () { $(this).remove(); },
+            });
+
+            $dlg.find("#fc-util-search").on("input", function () {
+              const q = $(this).val().toLowerCase();
+              $dlg.find(".fc-util-item").each(function () {
+                $(this).toggle($(this).data("search").indexOf(q) !== -1);
+              });
+            }).focus();
+
+            $dlg.on("mouseenter", ".fc-util-row", function () {
+              $(this).css("background", "rgba(251,191,36,.08)");
+            }).on("mouseleave", ".fc-util-row", function () {
+              $(this).css("background", "");
+            });
+
+            $dlg.on("click", ".fc-util-row", function (e) {
+              if ($(e.target).closest(".fc-util-sym").length) return;
+              const $item = $(this).closest(".fc-util-item");
+              const $detail = $item.find(".fc-util-detail");
+              const $arrow = $item.find(".fc-util-arrow");
+              const open = $detail.is(":visible");
+              $detail.slideToggle(100);
+              $arrow.css("transform", open ? "" : "rotate(90deg)");
+            });
+
+            // Click symbol → insert bare identifier at cursor
+            $dlg.on("click", ".fc-util-sym", function (e) {
+              e.stopPropagation();
+              const sym = $(this).data("sym");
+              $dlg.dialog("close");
+              if (editorInstance) {
+                const sel = editorInstance.getSelection();
+                const startLine = sel.startLineNumber;
+                const startCol = sel.startColumn;
+                editorInstance.executeEdits("fc-utilities", [{
+                  range: sel,
+                  text: sym,
+                }]);
+                setTimeout(function () {
+                  editorInstance.setPosition({ lineNumber: startLine, column: startCol + sym.length });
+                  editorInstance.focus();
+                }, 50);
+              } else {
+                const ta = $("#fc-fallback")[0];
+                const s = ta.selectionStart, en = ta.selectionEnd, v = ta.value;
+                ta.value = v.slice(0, s) + sym + v.slice(en);
+                setTimeout(function () {
+                  ta.selectionStart = ta.selectionEnd = s + sym.length;
                   ta.focus();
                 }, 50);
               }
