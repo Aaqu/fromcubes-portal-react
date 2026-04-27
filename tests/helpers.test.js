@@ -2,7 +2,7 @@
  * Unit tests for pure helpers exposed on the helpers module (no RED runtime).
  */
 
-const { validateSubPath } = require("../nodes/lib/helpers");
+const { validateSubPath, quickCheckSyntax } = require("../nodes/lib/helpers");
 
 describe("validateSubPath", () => {
   it("accepts a simple single segment", () => {
@@ -83,5 +83,36 @@ describe("validateSubPath", () => {
     expect(validateSubPath("foo.bar").ok).toBe(true);
     expect(validateSubPath("foo-bar").ok).toBe(true);
     expect(validateSubPath("foo_bar").ok).toBe(true);
+  });
+});
+
+describe("quickCheckSyntax", () => {
+  it("returns null for valid JSX", () => {
+    expect(quickCheckSyntax("function App(){return <div>hi</div>}")).toBeNull();
+  });
+
+  it("returns null for empty/whitespace input", () => {
+    expect(quickCheckSyntax("")).toBeNull();
+    expect(quickCheckSyntax("   \n  ")).toBeNull();
+  });
+
+  it("returns null for valid arrow component", () => {
+    expect(quickCheckSyntax("const App = () => <div />;")).toBeNull();
+  });
+
+  it("returns error string for malformed JSX", () => {
+    const err = quickCheckSyntax("function App(){ return <div }");
+    expect(typeof err).toBe("string");
+    expect(err.length).toBeGreaterThan(0);
+  });
+
+  it("includes line info for syntax errors", () => {
+    const err = quickCheckSyntax("function bad() {\n  let x = ;\n}");
+    expect(err).toMatch(/line/);
+  });
+
+  it("returns error for ReferenceError-shaped code (still parses) → null", () => {
+    // dsada is undefined at runtime, but valid syntax — should pass
+    expect(quickCheckSyntax("function App(){return dsada}")).toBeNull();
   });
 });

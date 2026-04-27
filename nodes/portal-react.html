@@ -499,7 +499,10 @@
 
       var diagOpts = {
         noSemanticValidation: true,
-        noSyntaxValidation: false,
+        // Server-side esbuild does the real syntax check at deploy time;
+        // Monaco's TS parser produces noisy false positives on raw JSX
+        // (1109, 1005, 1128 etc.), so we silence its squiggles entirely.
+        noSyntaxValidation: true,
         noSuggestionDiagnostics: true,
         diagnosticCodesToIgnore: [17004],
       };
