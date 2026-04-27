@@ -81,6 +81,29 @@ The opt-out is page-wide — the strictest call wins. If any component on the pa
 
 There is also a config node, **fc-portal-component**, that lets you define reusable React components once and reference them by name from any portal-react node. Referenced components (and their transitive dependencies) are injected at transpile time, so unused ones add nothing to the bundle.
 
+For shared **non-component** code (helpers, custom hooks, constants), use **fc-portal-utility** — a sibling config node. Unlike component nodes (which export exactly one symbol via an IIFE wrapper), a utility node is injected raw at top level so it can declare any number of `function` / `const` / `let` / `class` symbols. Selective inclusion: a utility node lands in a portal's bundle only when the portal's JSX or any of its referenced library components mentions at least one of the symbols declared in that utility.
+
+```jsx
+// fc-portal-utility, Module name = mathHelpers
+const PI2 = Math.PI * 2;
+function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+function useDebounce(value, ms = 300) {
+  const [v, setV] = React.useState(value);
+  React.useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+// portal-react, JSX tab
+function App() {
+  const { data } = useNodeRed();
+  const slow = useDebounce(data?.value);
+  return <div>{clamp(slow ?? 0, 0, 100)}</div>;
+}
+```
+
 ## Editor features
 
 - **Monaco** with full JSX support and `useNodeRed()` type declarations
@@ -88,6 +111,8 @@ There is also a config node, **fc-portal-component**, that lets you define reusa
 - **JSX tag completion** — type tag name, Tab to expand
 - **Self-close collapse** — type `/` inside empty `<tag></tag>` to convert to `<tag />`
 - **Component completion** — registry components + any PascalCase word
+- **Utility-symbol completion** — top-level identifiers from any `fc-portal-utility` node, suggested in JS context
+- **Components / Utilities dialogs** — buttons in the JSX tab; Components inserts `<Tag></Tag>`, Utilities expands to the symbols declared in each node and inserts the bare identifier on click
 - **Portal Assets sidebar** — file manager for static assets (GLB, textures, fonts…)
 
 ## Multi-user / Multi-tenancy
@@ -177,6 +202,7 @@ Import `001-shared-components-flow.json` first — it provides shared UI compone
 | `005-threejs-portal-flow.json` | `three` | 3D scene with Three.js |
 | `006-pixi-portal-flow.json` | `pixi.js`, `@pixi/react` | Clickable bunny sprites with PixiJS |
 | `007-webgpu-tsl-flow.json` | `three` | WebGPU renderer + TSL animated shaders |
+| `008-utility-debounce-flow.json` | — | `fc-portal-utility` demo: `useDebounce` custom hook + `clamp` helper |
 
 ## Troubleshooting
 

@@ -99,13 +99,13 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
       <script>
         function __safe(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
         function __renderErrorOverlay(title, message, hint) {
-          var root = document.getElementById('root');
+          const root = document.getElementById('root');
           if (root) root.style.display = 'none';
-          var bo = document.getElementById('__building_overlay');
+          const bo = document.getElementById('__building_overlay');
           if (bo) bo.remove();
-          var bn = document.getElementById('__error_banner');
+          const bn = document.getElementById('__error_banner');
           if (bn) bn.remove();
-          var ov = document.getElementById('__error_overlay');
+          let ov = document.getElementById('__error_overlay');
           if (!ov) { ov = document.createElement('div'); ov.id = '__error_overlay'; document.body.appendChild(ov); }
           ov.innerHTML = '<h1>' + __safe(title) + '</h1>'
             + (hint ? '<p class="__hint">' + __safe(hint) + '</p>' : '')
@@ -113,13 +113,13 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
             + '<p class="__status __off" id="__err_status">Waiting for redeploy\\u2026</p>';
         }
         function __renderErrorBanner(message) {
-          var ov = document.getElementById('__error_overlay');
+          const ov = document.getElementById('__error_overlay');
           if (ov) ov.remove();
-          var bo = document.getElementById('__building_overlay');
+          const bo = document.getElementById('__building_overlay');
           if (bo) bo.remove();
-          var root = document.getElementById('root');
+          const root = document.getElementById('root');
           if (root) root.style.display = '';
-          var bn = document.getElementById('__error_banner');
+          let bn = document.getElementById('__error_banner');
           if (!bn) {
             bn = document.createElement('div');
             bn.id = '__error_banner';
@@ -135,11 +135,11 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
             + '<pre>' + __safe(message) + '</pre>';
         }
         function __clearErrorOverlay() {
-          var ov = document.getElementById('__error_overlay');
+          const ov = document.getElementById('__error_overlay');
           if (ov) ov.remove();
-          var bn = document.getElementById('__error_banner');
+          const bn = document.getElementById('__error_banner');
           if (bn) bn.remove();
-          var root = document.getElementById('root');
+          const root = document.getElementById('root');
           if (root) root.style.display = '';
         }
         window.__NR = {
@@ -170,7 +170,7 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
               if (s) { s.textContent = 'fromcubes • connected'; s.className = 'ok'; }
               this._retries = 0;
               this._wasConnected = true;
-              var es = document.getElementById('__err_status');
+              const es = document.getElementById('__err_status');
               if (es) { es.textContent = 'Connected \\u2014 will reload on redeploy'; es.className = '__status'; }
               if (this._pendingRuntimeError) {
                 try { ws.send(JSON.stringify({ type: 'runtime_error', message: this._pendingRuntimeError })); } catch(_) {}
@@ -201,10 +201,10 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
                 if (m.type === 'building') {
                   this._buildErrorActive = true;
                   document.getElementById('root').style.display = 'none';
-                  var eo = document.getElementById('__error_overlay');
+                  const eo = document.getElementById('__error_overlay');
                   if (eo) eo.remove();
                   if (!document.getElementById('__building_overlay')) {
-                    var ov = document.createElement('div');
+                    const ov = document.createElement('div');
                     ov.id = '__building_overlay';
                     ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#111;color:#888;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:monospace';
                     ov.innerHTML = '<div style="font-size:24px;margin-bottom:16px">Building\\u2026</div>'
@@ -219,7 +219,7 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
                     __renderErrorBanner(m.message);
                   } else {
                     __renderErrorOverlay('Build Error', m.message, ${JSON.stringify(DEFAULT_HINT)});
-                    var es2 = document.getElementById('__err_status');
+                    const es2 = document.getElementById('__err_status');
                     if (es2) { es2.textContent = 'Connected \\u2014 will reload on redeploy'; es2.className = '__status'; }
                   }
                 }
@@ -241,7 +241,7 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
             ws.onclose = () => {
               if (s) { s.textContent = 'fromcubes • disconnected'; s.className = 'err'; }
               this._ws = null;
-              var es = document.getElementById('__err_status');
+              const es = document.getElementById('__err_status');
               if (es) { es.textContent = 'Disconnected \\u2014 reconnecting\\u2026'; es.className = '__status __off'; }
               const delay = Math.min(500 * Math.pow(2, this._retries), 8000);
               this._retries++;
@@ -267,7 +267,7 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
       <script>
         try { ${escScript(transpiledJs)}
         } catch(__e) {
-          var __m = (__e && (__e.stack || __e.message)) || String(__e);
+          const __m = (__e && (__e.stack || __e.message)) || String(__e);
           __renderErrorOverlay('Runtime Error', __m, ${JSON.stringify(DEFAULT_HINT)});
           // Report back to server so node status goes red. WS may not be open
           // yet (sync throw during initial bundle); queue until onopen.
@@ -302,31 +302,31 @@ function buildErrorPage(title, error, wsPath) {
       })}</div>
       <script>
         (function() {
-          var st = document.getElementById('__err_status');
-          var pre = document.querySelector('#__error_overlay pre');
-          var retries = 0;
+          const st = document.getElementById('__err_status');
+          const pre = document.querySelector('#__error_overlay pre');
+          let retries = 0;
           function setStatus(text, ok) {
             if (!st) return;
             st.textContent = text;
             st.className = '__status' + (ok ? '' : ' __off');
           }
           function connect() {
-            var p = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            var ws = new WebSocket(p + '//' + location.host + '${wsPath}');
+            const p = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(p + '//' + location.host + '${wsPath}');
             ws.onopen = function() {
               retries = 0;
               setStatus('Connected \\u2014 will reload on redeploy', true);
             };
             ws.onmessage = function(e) {
               try {
-                var m = JSON.parse(e.data);
+                const m = JSON.parse(e.data);
                 if (m.type === 'version' && m.hash) location.reload();
                 if (m.type === 'error' && pre) pre.textContent = m.message;
               } catch(_) {}
             };
             ws.onclose = function() {
               setStatus('Disconnected \\u2014 reconnecting\\u2026', false);
-              var delay = Math.min(500 * Math.pow(2, retries), 8000);
+              const delay = Math.min(500 * Math.pow(2, retries), 8000);
               retries++;
               setTimeout(connect, delay);
             };

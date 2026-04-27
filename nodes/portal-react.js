@@ -66,10 +66,38 @@ module.exports = function (RED) {
   const endpointOwners = RED.settings.fcEndpointOwners;
 
   // Track component name ownership: { compName: nodeId } — prevents duplicate component names
+  // Shared namespace with fc-portal-utility nodes so a component and a utility
+  // can never share the same name.
   if (!RED.settings.fcCompNameOwners) {
     RED.settings.fcCompNameOwners = {};
   }
   const compNameOwners = RED.settings.fcCompNameOwners;
+
+  // Utility registry: populated by fc-portal-utility canvas nodes at deploy time.
+  // Keyed by node-level utilName (e.g. "mathHelpers"), value { code, error }.
+  // Each utility node may declare multiple top-level symbols inside its code block.
+  if (!RED.settings.fcPortalUtilities) {
+    RED.settings.fcPortalUtilities = {};
+  }
+  const utilities = RED.settings.fcPortalUtilities;
+
+  // Per-portal set of utility node names this portal depends on (transitively).
+  // Lets utility code changes target only portals that reference at least one
+  // symbol declared by the changed utility node.
+  if (!RED.settings.fcPortalNeededUtilities) {
+    RED.settings.fcPortalNeededUtilities = {};
+  }
+  const portalNeededUtilities = RED.settings.fcPortalNeededUtilities;
+
+  // Track owner of each top-level symbol declared inside fc-portal-utility nodes:
+  // { symbol: utilName }. Lets us catch collisions upfront (component-name vs
+  // utility-symbol, utility-symbol vs utility-symbol from another node) before
+  // they reach esbuild, where the diagnostic would surface on the portal node
+  // as a confusing transpile error rather than on the offending utility node.
+  if (!RED.settings.fcUtilSymbolOwners) {
+    RED.settings.fcUtilSymbolOwners = {};
+  }
+  const utilSymbolOwners = RED.settings.fcUtilSymbolOwners;
 
   // Per-portal config signature — detects no-op Full-deploy reconstructions so unchanged
   // portals skip rebuild entirely (Node-RED closes/reopens every node on Full deploy).
@@ -133,10 +161,15 @@ module.exports = function (RED) {
     if (dirty.size > 0) {
       for (const nodeId of Object.keys(rebuildCallbacks)) {
         if (targetIds.has(nodeId)) continue;
-        const used = portalNeeded[nodeId];
+        const usedComps = portalNeeded[nodeId];
+        const usedUtils = portalNeededUtilities[nodeId];
         const raw = portalCode[nodeId] || "";
         for (const name of dirty) {
-          if ((used && used.has(name)) || raw.includes(name)) {
+          if (
+            (usedComps && usedComps.has(name)) ||
+            (usedUtils && usedUtils.has(name)) ||
+            raw.includes(name)
+          ) {
             targetIds.add(nodeId);
             break;
           }
@@ -213,6 +246,25 @@ module.exports = function (RED) {
       });
       return;
     }
+
+    // Cross-namespace collision: compName matches an existing utility's
+    // internal top-level symbol → bundle would have two declarations of the
+    // same identifier (component IIFE + utility raw decl).
+    const utilSymOwner = utilSymbolOwners[compName];
+    if (utilSymOwner) {
+      node.error(
+        `Component name "${compName}" conflicts with a top-level symbol declared in utility "${utilSymOwner}"`,
+      );
+      node.status({
+        fill: "red",
+        shape: "ring",
+        text: "duplicate symbol: " + compName,
+      });
+      node.on("close", function (_removed, done) {
+        if (done) done();
+      });
+      return;
+    }
     compNameOwners[compName] = node.id;
 
     const newCode = config.compCode || "";
@@ -244,6 +296,145 @@ module.exports = function (RED) {
     });
   }
   RED.nodes.registerType("fc-portal-component", PortalComponentNode);
+
+  // ── Canvas node: shared utility (helpers / hooks / constants) ─
+
+  // Parse top-level symbols from utility code: function/const/let/class declarations.
+  // Used for selective inclusion (does user JSX reference any of these symbols?)
+  // and for the editor "Utilities" dialog (lists exported identifiers per node).
+  function extractUtilitySymbols(code) {
+    const names = new Set();
+    const re = /^(?:export\s+)?(?:async\s+)?(?:function\s*\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm;
+    let m;
+    while ((m = re.exec(code || ""))) names.add(m[1]);
+    return names;
+  }
+
+  function PortalUtilityNode(config) {
+    RED.nodes.createNode(this, config);
+    const node = this;
+    const utilName = (config.utilName || "").trim();
+
+    if (!isSafeName(utilName)) {
+      node.error("Invalid utility name: " + utilName);
+      node.status({ fill: "red", shape: "dot", text: "invalid name" });
+      return;
+    }
+
+    // Duplicate name check across components AND utilities (shared namespace)
+    const existingOwner = compNameOwners[utilName];
+    if (existingOwner && existingOwner !== node.id) {
+      node.error(
+        `Name "${utilName}" is already used by another component or utility`,
+      );
+      node.status({
+        fill: "red",
+        shape: "ring",
+        text: "duplicate: " + utilName,
+      });
+      node.on("close", function (_removed, done) {
+        if (done) done();
+      });
+      return;
+    }
+    compNameOwners[utilName] = node.id;
+
+    const newCode = config.utilCode || "";
+    const prevCode = utilities[utilName]?.code;
+    const prevSyms = extractUtilitySymbols(prevCode || "");
+    const newSyms = extractUtilitySymbols(newCode);
+
+    // Free this node's previously-registered symbols before checking new ones,
+    // so a redeploy that simply renames an internal symbol doesn't see itself
+    // as a collision.
+    for (const s of prevSyms) {
+      if (utilSymbolOwners[s] === utilName) delete utilSymbolOwners[s];
+    }
+
+    // Cross-namespace symbol collision check:
+    //  - vs component names (a component declares `const Name = (() => ...)();`
+    //    at top level — a utility-internal `function Name` would clash)
+    //  - vs other utility nodes' internal symbols (raw top-level decls clash)
+    const conflicts = [];
+    for (const s of newSyms) {
+      if (Object.prototype.hasOwnProperty.call(registry, s)) {
+        conflicts.push(`${s} (component)`);
+        continue;
+      }
+      const symOwner = utilSymbolOwners[s];
+      if (symOwner && symOwner !== utilName) {
+        conflicts.push(`${s} (utility ${symOwner})`);
+      }
+    }
+
+    const syntaxErr = quickCheckSyntax(newCode);
+    const dupErr =
+      conflicts.length > 0
+        ? "duplicate symbols: " + conflicts.join(", ")
+        : null;
+    // Syntax error takes precedence (most actionable). If both, both are
+    // surfaced in the node.error message but status text shows syntax.
+    const combinedErr = syntaxErr || dupErr;
+
+    utilities[utilName] = { code: newCode, error: combinedErr };
+
+    if (combinedErr) {
+      const msgs = [syntaxErr, dupErr].filter(Boolean).join(" | ");
+      node.error(`Utility "${utilName}": ${msgs}`);
+      if (syntaxErr) {
+        const short = syntaxErr.split("\n")[0].slice(0, 40);
+        node.status({ fill: "red", shape: "dot", text: "syntax: " + short });
+      } else {
+        const firstSym = conflicts[0].split(" ")[0];
+        node.status({
+          fill: "red",
+          shape: "ring",
+          text: "duplicate symbol: " + firstSym,
+        });
+      }
+      // Don't register symbols on conflict — leave the namespace clean for
+      // whichever node actually owns them. Dependent portals will surface
+      // "broken: <utilName>" via the standard utility-error path.
+    } else {
+      // Register all new symbols as owned by this utility node
+      for (const s of newSyms) utilSymbolOwners[s] = utilName;
+      node.status({
+        fill: "green",
+        shape: "dot",
+        text: "utility: " + utilName,
+      });
+    }
+
+    // Trigger rebuild of portals using this utility (any of its inner symbols).
+    // Push BOTH the node-level utilName AND each top-level symbol into the
+    // dirty set so portals matching by either are caught by selective rebuild.
+    if (prevCode !== newCode) {
+      scheduleRebuildUsing(utilName);
+      for (const s of newSyms) scheduleRebuildUsing(s);
+      // Symbols removed in this edit must also force rebuild for portals that
+      // referenced them — those portals will fail to find the symbol and need
+      // to surface an error or recompile against the new utility code.
+      for (const s of prevSyms) if (!newSyms.has(s)) scheduleRebuildUsing(s);
+    }
+
+    node.on("close", function (removed, done) {
+      if (compNameOwners[utilName] === node.id) {
+        delete compNameOwners[utilName];
+      }
+      // Remove all symbols this node currently owns (none if it errored out
+      // on dup-check, all of newSyms otherwise — driven by the registration
+      // table, not by re-parsing the code).
+      for (const s of Object.keys(utilSymbolOwners)) {
+        if (utilSymbolOwners[s] === utilName) delete utilSymbolOwners[s];
+      }
+      const removedSyms = extractUtilitySymbols(utilities[utilName]?.code || "");
+      delete utilities[utilName];
+      scheduleRebuildUsing(utilName);
+      for (const s of removedSyms) scheduleRebuildUsing(s);
+      if (done) done();
+    });
+  }
+  RED.nodes.registerType("fc-portal-utility", PortalUtilityNode);
 
   // ── Main node: portal-react ───────────────────────────────────
 
@@ -410,6 +601,45 @@ module.exports = function (RED) {
         // can target only affected portals.
         portalNeeded[nodeId] = new Set(needed);
 
+        // ── Selective utility injection ──
+        // Each utility node contributes raw top-level code that may declare
+        // multiple symbols. Pull the whole node in if the user JSX OR any
+        // included library component references at least one of its symbols.
+        const allUtilEntries = Object.entries(utilities);
+        const utilSymbols = new Map(); // utilName -> Set of symbol names
+        for (const [n, u] of allUtilEntries) {
+          utilSymbols.set(n, extractUtilitySymbols(u.code || ""));
+        }
+        const includedLibraryCode = [...needed]
+          .map((n) => registry[n]?.code || "")
+          .join("\n");
+        const referencesAnySymbol = (text, syms) => {
+          for (const s of syms) {
+            const re = new RegExp(`\\b${s}\\b`);
+            if (re.test(text)) return true;
+          }
+          return false;
+        };
+        const neededUtils = new Set();
+        function addUtilWithDeps(name) {
+          if (neededUtils.has(name)) return;
+          const u = utilities[name];
+          if (!u) return;
+          neededUtils.add(name);
+          // Transitively include other utilities referenced by this utility's code
+          for (const [other, otherSyms] of utilSymbols) {
+            if (other === name) continue;
+            if (referencesAnySymbol(u.code || "", otherSyms)) {
+              addUtilWithDeps(other);
+            }
+          }
+        }
+        const userScanText = componentCode + "\n" + includedLibraryCode;
+        for (const [n, syms] of utilSymbols) {
+          if (referencesAnySymbol(userScanText, syms)) addUtilWithDeps(n);
+        }
+        portalNeededUtilities[nodeId] = new Set(neededUtils);
+
         // Topological sort only needed components
         const entries = allEntries.filter(([n]) => needed.has(n));
         entries.sort((a, b) => {
@@ -426,17 +656,39 @@ module.exports = function (RED) {
           )
           .join("\n\n");
 
-        // Extract import statements from library/user code so they appear at top level
+        // Build utility block — raw top-level concat of needed utility codes.
+        // No IIFE wrapper: a single utility node may declare many symbols.
+        const utilityJsx = [...neededUtils]
+          .map((n) => `// Utility: ${n}\n${utilities[n].code}`)
+          .join("\n\n");
+
+        // Extract import statements from library/utility/user code so they appear at top level
         const importRe = /^import\s+.+?from\s+['"].+?['"];?\s*$/gm;
         const libImports = libraryJsx.match(importRe) || [];
         const userImports = componentCode.match(importRe) || [];
+        const utilImports = utilityJsx.match(importRe) || [];
         const cleanLibJsx = libraryJsx.replace(importRe, "").trim();
         const cleanCompCode = componentCode.replace(importRe, "").trim();
+        const cleanUtilJsx = utilityJsx.replace(importRe, "").trim();
+
+        // Dedupe imports across all sources (libs may already pull React; user
+        // and utility may import the same package).
+        const seenImports = new Set();
+        const dedupImports = (arr) =>
+          arr.filter((s) => {
+            const k = s.trim();
+            if (seenImports.has(k)) return false;
+            seenImports.add(k);
+            return true;
+          });
+        const allLibImports = dedupImports(libImports);
+        const allUserImports = dedupImports(userImports);
+        const allUtilImports = dedupImports(utilImports);
 
         // Warn about import * (prevents tree-shaking)
         const starRe = /^import\s+\*\s+as\s+(\w+)\s+from\s+['"](.+?)['"];?\s*$/;
-        const allCode = cleanLibJsx + "\n" + cleanCompCode;
-        for (const imp of [...libImports, ...userImports]) {
+        const allCode = cleanLibJsx + "\n" + cleanUtilJsx + "\n" + cleanCompCode;
+        for (const imp of [...allLibImports, ...allUserImports, ...allUtilImports]) {
           const m = imp.match(starRe);
           if (!m) continue;
           const [, localName, modulePath] = m;
@@ -461,8 +713,9 @@ module.exports = function (RED) {
           'import React from "react";',
           'import ReactDOM from "react-dom";',
           'import { createRoot } from "react-dom/client";',
-          ...libImports,
-          ...userImports,
+          ...allLibImports,
+          ...allUtilImports,
+          ...allUserImports,
           "",
           "// ── React shorthand ──",
           "Object.keys(React).filter(k => /^use[A-Z]/.test(k)).forEach(k => { window[k] = React[k]; });",
@@ -487,6 +740,9 @@ module.exports = function (RED) {
             "}",
           ].join("\n"),
           "",
+          "// ── Utilities (helpers / hooks / constants) ──",
+          cleanUtilJsx,
+          "",
           "// ── Library components ──",
           cleanLibJsx,
           "",
@@ -499,12 +755,23 @@ module.exports = function (RED) {
 
         const jsxHash = hash(fullJsx);
 
-        // ── Check: any used component has its own syntax error ──
+        // ── Check: any used component or utility has its own syntax error ──
         let errorSource = null;
+        let errorSourceKind = null; // 'component' | 'utility'
         for (const name of needed) {
           if (registry[name]?.error) {
             errorSource = name;
+            errorSourceKind = "component";
             break;
+          }
+        }
+        if (!errorSource) {
+          for (const name of neededUtils) {
+            if (utilities[name]?.error) {
+              errorSource = name;
+              errorSourceKind = "utility";
+              break;
+            }
           }
         }
 
@@ -529,11 +796,16 @@ module.exports = function (RED) {
         let cacheHit = false;
         let errorKind = null; // 'component' | 'missing-return' | 'transpile'
         if (errorSource) {
+          const srcErr =
+            errorSourceKind === "utility"
+              ? utilities[errorSource].error
+              : registry[errorSource].error;
+          const label = errorSourceKind === "utility" ? "Utility" : "Component";
           compiled = {
             js: null,
-            error: `Component "${errorSource}" has a syntax error:\n\n${registry[errorSource].error}`,
+            error: `${label} "${errorSource}" has a syntax error:\n\n${srcErr}`,
           };
-          errorKind = "component";
+          errorKind = errorSourceKind;
         } else if (missingReturn) {
           compiled = {
             js: null,
@@ -557,6 +829,8 @@ module.exports = function (RED) {
           node.error(
             (errorKind === "component"
               ? `Component "${errorSource}" syntax error: `
+              : errorKind === "utility"
+              ? `Utility "${errorSource}" syntax error: `
               : errorKind === "missing-return"
               ? "App component has no return statement: "
               : "JSX transpile error: ") + compiled.error,
@@ -750,7 +1024,7 @@ module.exports = function (RED) {
                 .set("Cache-Control", "no-store")
                 .type("text/html")
                 .send(
-                  `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Building\u2026</title><style>@keyframes __sp{to{transform:rotate(360deg)}}body{font-family:monospace;background:#111;color:#888;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}</style></head><body><div style="font-size:24px;margin-bottom:16px">Building\u2026</div><div style="width:40px;height:40px;border:3px solid #333;border-top-color:#888;border-radius:50%;animation:__sp .8s linear infinite"></div><script>(function(){var r=0;function c(){var p=location.protocol==='https:'?'wss:':'ws:';var ws=new WebSocket(p+'//'+location.host+'${bWsPath}');ws.onmessage=function(e){try{var m=JSON.parse(e.data);if((m.type==='version'&&m.hash)||m.type==='error')location.reload();}catch(_){}};ws.onclose=function(){var d=Math.min(500*Math.pow(2,r),8000);r++;setTimeout(c,d);};ws.onerror=function(){ws.close();};}c();})()</script></body></html>`,
+                  `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Building\u2026</title><style>@keyframes __sp{to{transform:rotate(360deg)}}body{font-family:monospace;background:#111;color:#888;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}</style></head><body><div style="font-size:24px;margin-bottom:16px">Building\u2026</div><div style="width:40px;height:40px;border:3px solid #333;border-top-color:#888;border-radius:50%;animation:__sp .8s linear infinite"></div><script>(function(){let r=0;function c(){const p=location.protocol==='https:'?'wss:':'ws:';const ws=new WebSocket(p+'//'+location.host+'${bWsPath}');ws.onmessage=function(e){try{const m=JSON.parse(e.data);if((m.type==='version'&&m.hash)||m.type==='error')location.reload();}catch(_){}};ws.onclose=function(){const d=Math.min(500*Math.pow(2,r),8000);r++;setTimeout(c,d);};ws.onerror=function(){ws.close();};}c();})()</script></body></html>`,
                 );
               return;
             }
@@ -1058,6 +1332,7 @@ module.exports = function (RED) {
         // Unregister rebuild callback + selective-rebuild metadata
         delete rebuildCallbacks[nodeId];
         delete portalNeeded[nodeId];
+        delete portalNeededUtilities[nodeId];
         delete portalCode[nodeId];
 
         // Release endpoint ownership
@@ -1188,6 +1463,87 @@ module.exports = function (RED) {
     delete registry[name];
     if (existed) {
       scheduleRebuildUsing(name);
+    }
+    res.json({ ok: true });
+  });
+
+  // ── Admin API for utility registry ────────────────────────────
+
+  RED.httpAdmin.get("/portal-react/utilities", (_req, res) => {
+    // Include parsed top-level symbols so the editor "Utilities" dialog can
+    // list which identifiers each node exports.
+    const out = {};
+    for (const [name, u] of Object.entries(utilities)) {
+      out[name] = {
+        code: u.code,
+        error: u.error || null,
+        symbols: [...extractUtilitySymbols(u.code || "")],
+      };
+    }
+    res.json(out);
+  });
+
+  RED.httpAdmin.post("/portal-react/utilities", (req, res) => {
+    const { name, code } = req.body || {};
+    if (!isSafeName(name))
+      return res.status(400).json({ error: "invalid name" });
+    const newCode = code || "";
+    const prevCode = utilities[name]?.code;
+    const prevSyms = extractUtilitySymbols(prevCode || "");
+    const newSyms = extractUtilitySymbols(newCode);
+
+    // Free previously-owned symbols before conflict check (mirror node ctor)
+    for (const s of prevSyms) {
+      if (utilSymbolOwners[s] === name) delete utilSymbolOwners[s];
+    }
+
+    const conflicts = [];
+    for (const s of newSyms) {
+      if (Object.prototype.hasOwnProperty.call(registry, s)) {
+        conflicts.push(`${s} (component)`);
+        continue;
+      }
+      const symOwner = utilSymbolOwners[s];
+      if (symOwner && symOwner !== name) {
+        conflicts.push(`${s} (utility ${symOwner})`);
+      }
+    }
+
+    const syntaxErr = quickCheckSyntax(newCode);
+    const dupErr =
+      conflicts.length > 0
+        ? "duplicate symbols: " + conflicts.join(", ")
+        : null;
+    const combinedErr = syntaxErr || dupErr;
+
+    utilities[name] = { code: newCode, error: combinedErr };
+
+    if (!combinedErr) {
+      for (const s of newSyms) utilSymbolOwners[s] = name;
+    }
+
+    if (prevCode !== newCode) {
+      scheduleRebuildUsing(name);
+      for (const s of newSyms) scheduleRebuildUsing(s);
+      for (const s of prevSyms) if (!newSyms.has(s)) scheduleRebuildUsing(s);
+    }
+    res.json({ ok: true, error: combinedErr || null });
+  });
+
+  RED.httpAdmin.delete("/portal-react/utilities/:name", (req, res) => {
+    const name = req.params.name;
+    if (!isSafeName(name))
+      return res.status(400).json({ error: "invalid name" });
+    const prev = utilities[name];
+    delete utilities[name];
+    // Release all symbols owned by this utility
+    for (const s of Object.keys(utilSymbolOwners)) {
+      if (utilSymbolOwners[s] === name) delete utilSymbolOwners[s];
+    }
+    if (prev) {
+      const removedSyms = extractUtilitySymbols(prev.code || "");
+      scheduleRebuildUsing(name);
+      for (const s of removedSyms) scheduleRebuildUsing(s);
     }
     res.json({ ok: true });
   });

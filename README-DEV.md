@@ -39,7 +39,9 @@ For end-user docs (install, `useNodeRed()`, examples) see [README.md](./README.m
 
 ### Key design decisions
 
-- **One esbuild pass per sub-path.** React + npm packages + your JSX are compiled into one IIFE bundle. Tree-shaking removes unused exports. All portal nodes share the hardcoded `/fromcubes/` URL prefix — only the sub-path after it is user-configurable.
+- **One esbuild pass per sub-path.** React + npm packages + utility helpers + library components + your JSX are compiled into one IIFE bundle. Tree-shaking removes unused exports. All portal nodes share the hardcoded `/fromcubes/` URL prefix — only the sub-path after it is user-configurable.
+- **Two flavours of shared canvas nodes:** `fc-portal-component` (one exported React component per node, IIFE-wrapped — referenced as `<Tag/>`), and `fc-portal-utility` (raw top-level concat — many helpers/hooks/constants per node, referenced as bare identifiers). Both selectively bundled by symbol reference.
+- **Upfront symbol-collision check.** A shared `fcUtilSymbolOwners` table catches duplicate top-level identifiers across utility nodes (and against component names) at deploy, so the offending utility node is flagged red instead of esbuild surfacing a confusing `Identifier "X" has already been declared` error on a downstream portal.
 - **Single React instance.** esbuild `alias` ensures peer-dep packages (`@react-three/fiber`, `@pixi/react`) share the same React — no duplicate React, no hooks errors.
 - **Content-hash cache.** Unchanged JSX on redeploy reuses the cached bundle (~0 ms). Changed JSX retranspiles (~5 ms).
 - **Tailwind compiled server-side.** No PostCSS in the browser; the CSS is generated from the JSX source and stored per-page.
@@ -49,19 +51,24 @@ For end-user docs (install, `useNodeRed()`, examples) see [README.md](./README.m
 
 ```
 nodes/
-  portal-react.js        Main runtime node — WS lifecycle, routing glue, deploy hooks
-  portal-react.html      Editor UI (Monaco, Tailwind autocompletion, sidebar)
-  fc-portal-component.js Config node for shared component definitions
+  portal-react.js        Main runtime — registers portal-react, fc-portal-component
+                         and fc-portal-utility node types; WS lifecycle, routing,
+                         bundle pipeline, admin REST API
+  portal-react.html      Editor UI for all three node types (Monaco, Tailwind +
+                         JSX + utility-symbol autocompletion, Components dialog,
+                         Utilities dialog, Portal Assets sidebar)
   lib/
+    helpers.js           hash, transpile, generateCSS, isSafeName, validateSubPath,
+                         disk cache helpers
     hooks.js             Plugin hook dispatcher (allow + transform)
     router.js            Pure routing function (unicast / user-cast / broadcast)
     page-builder.js      Browser HTML + window.__NR shim (WS bridge for useNodeRed)
-    transpile.js         esbuild + Tailwind pipeline
     assets.js            Portal Assets file manager
 tests/
+  helpers.test.js        Pure helpers
   hooks.test.js          Hook dispatcher unit tests
   routing.test.js        Pure routing function tests
-  …
+  assets.test.js         Assets module tests
 examples/                Example flows (importable into Node-RED)
 ```
 
@@ -171,6 +178,8 @@ The client cannot forge `_client` — the server overwrites it from socket state
 | WebSocket bridge | <1 KB |
 
 Single-pass esbuild bundle. Tree-shaking removes unused exports. The React `alias` ensures peer-dep packages share the same React instance — no duplicate React, no hooks errors. No Babel, no Sucrase, no runtime compiler in the browser.
+
+Bundle layout inside the IIFE: `imports → React shorthand → useNodeRed hook → utilities (raw) → library components (each in IIFE wrapper) → user JSX → createRoot(...).render(<App/>)`. Utilities precede library components so a component can call utility-declared helpers and hooks.
 
 ## Testing
 

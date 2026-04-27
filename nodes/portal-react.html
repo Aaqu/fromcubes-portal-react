@@ -3,7 +3,7 @@
      ============================================================ -->
 <script type="text/javascript">
   (function () {
-    var PREFIX = "[FC-Monaco]";
+    const PREFIX = "[FC-Monaco]";
 
     // Shared editor options — used by both component and portal-react editors
     window.__fcEditorOpts = {
@@ -20,7 +20,7 @@
     };
 
     window.__fcTwClasses = null;
-    var jsxSetupDone = false;
+    let jsxSetupDone = false;
 
     // One-time Monaco setup: compiler opts, diagnostics, extra libs, completion provider.
     // Idempotent — safe to call multiple times, only runs setup once.
@@ -36,7 +36,7 @@
       }
       jsxSetupDone = true;
 
-      var jsDef = monaco.typescript.javascriptDefaults;
+      const jsDef = monaco.typescript.javascriptDefaults;
 
       // Log initial state
       console.log(
@@ -53,9 +53,9 @@
       applyCompilerAndDiag();
 
       // Global type stubs
-      var libContent = [
-        "declare var React: any;",
-        "declare var ReactDOM: any;",
+      const libContent = [
+        "declare const React: any;",
+        "declare const ReactDOM: any;",
         "declare function useNodeRed(opts?: { ignoreRecovery?: boolean }): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null };",
       ].join("\n");
       console.log(PREFIX, "addExtraLib globals.d.ts");
@@ -68,44 +68,44 @@
       monaco.languages.registerCompletionItemProvider("javascript", {
         triggerCharacters: ['"', "'", "`", " "],
         provideCompletionItems: function (model, position) {
-          var line = model.getLineContent(position.lineNumber);
-          var before = line.substring(0, position.column - 1);
+          const line = model.getLineContent(position.lineNumber);
+          const before = line.substring(0, position.column - 1);
 
           // 1) className="..." or className={`...`}
-          var isClassName =
+          const isClassName =
             before.match(/className\s*=\s*["'][^"']*$/) ||
             before.match(/className\s*=\s*\{`[^`]*$/);
 
           // 2) Any open string literal: "..., '..., or `...
-          var inString = !isClassName && before.match(/["'`][^"'`]*$/);
+          const inString = !isClassName && before.match(/["'`][^"'`]*$/);
 
           if (!isClassName && !inString) return { suggestions: [] };
 
           // Extract text inside the string
-          var raw = (isClassName || inString)[0];
-          var inside;
+          const raw = (isClassName || inString)[0];
+          let inside;
           if (isClassName) {
             inside = raw.replace(/^className\s*=\s*(?:\{`|["'])/, "");
           } else {
             inside = raw.substring(1); // skip opening quote
           }
           inside = inside.replace(/\$\{[^}]*\}/g, " ");
-          var parts = inside.split(/\s+/);
-          var word = parts[parts.length - 1] || "";
+          const parts = inside.split(/\s+/);
+          const word = parts[parts.length - 1] || "";
 
           // For non-className strings, only activate if at least one existing
           // token in the string looks like a TW class (avoid noise in random strings)
           if (!isClassName && parts.length > 0) {
-            var classes = window.__fcTwClasses || [];
-            var twSet = window.__fcTwSet;
+            const classes = window.__fcTwClasses || [];
+            let twSet = window.__fcTwSet;
             if (!twSet && classes.length) {
               twSet = new Set(classes);
               window.__fcTwSet = twSet;
               console.log(PREFIX, "TW: built lookup Set, size=" + twSet.size);
             }
             if (twSet) {
-              var hasTwToken = false;
-              for (var p = 0; p < parts.length; p++) {
+              let hasTwToken = false;
+              for (let p = 0; p < parts.length; p++) {
                 if (parts[p] && twSet.has(parts[p])) {
                   hasTwToken = true;
                   break;
@@ -113,7 +113,7 @@
               }
               // If typing the very first word, accept if it looks like a prefix
               if (!hasTwToken && parts.length === 1 && word.length >= 2) {
-                for (var j = 0; j < classes.length; j++) {
+                for (let j = 0; j < classes.length; j++) {
                   if (classes[j].indexOf(word) === 0) {
                     hasTwToken = true;
                     break;
@@ -124,17 +124,17 @@
             }
           }
 
-          var range = {
+          const range = {
             startLineNumber: position.lineNumber,
             endLineNumber: position.lineNumber,
             startColumn: position.column - word.length,
             endColumn: position.column,
           };
 
-          var classes = window.__fcTwClasses || [];
-          var suggestions = [];
-          for (var i = 0; i < classes.length; i++) {
-            var cls = classes[i];
+          const classes = window.__fcTwClasses || [];
+          const suggestions = [];
+          for (let i = 0; i < classes.length; i++) {
+            const cls = classes[i];
             if (!word.length || cls.indexOf(word) === 0) {
               suggestions.push({
                 label: cls,
@@ -162,7 +162,7 @@
 
       // JSX/HTML tag completion — type tag name, Tab → <tag>|</tag>
       console.log(PREFIX, "registering JSX tag completion provider");
-      var HTML_TAGS = [
+      const HTML_TAGS = [
         "div",
         "span",
         "p",
@@ -238,40 +238,40 @@
         "use",
         "text",
       ];
-      var VOID_TAGS = new Set(["br", "hr", "img", "input", "wbr", "source"]);
+      const VOID_TAGS = new Set(["br", "hr", "img", "input", "wbr", "source"]);
 
       monaco.languages.registerCompletionItemProvider("javascript", {
         triggerCharacters: ["<"],
         provideCompletionItems: function (model, position) {
-          var line = model.getLineContent(position.lineNumber);
-          var before = line.substring(0, position.column - 1);
+          const line = model.getLineContent(position.lineNumber);
+          const before = line.substring(0, position.column - 1);
 
           // After "<" — suggest tags
-          var afterBracket = before.match(/<([a-zA-Z]*)$/);
+          const afterBracket = before.match(/<([a-zA-Z]*)$/);
           // Bare word at line start or after whitespace/{ — Emmet-like (lower or upper)
-          var bareWord =
+          const bareWord =
             !afterBracket &&
             before.match(/(?:^|[\s{(,])([a-zA-Z][a-zA-Z0-9]*)$/);
 
           if (!afterBracket && !bareWord) return { suggestions: [] };
 
-          var typed = (afterBracket ? afterBracket[1] : bareWord[1]) || "";
-          var replaceStart =
+          const typed = (afterBracket ? afterBracket[1] : bareWord[1]) || "";
+          const replaceStart =
             position.column - typed.length - (afterBracket ? 1 : 0);
 
-          var range = {
+          const range = {
             startLineNumber: position.lineNumber,
             endLineNumber: position.lineNumber,
             startColumn: replaceStart,
             endColumn: position.column,
           };
 
-          var suggestions = [];
-          var seen = new Set();
+          const suggestions = [];
+          const seen = new Set();
 
           // HTML tags
-          for (var i = 0; i < HTML_TAGS.length; i++) {
-            var tag = HTML_TAGS[i];
+          for (let i = 0; i < HTML_TAGS.length; i++) {
+            const tag = HTML_TAGS[i];
             if (typed && tag.indexOf(typed) !== 0) continue;
             seen.add(tag);
             if (VOID_TAGS.has(tag)) {
@@ -310,11 +310,11 @@
           }
 
           // Custom components from registry (PascalCase)
-          var upperMatch =
+          const upperMatch =
             afterBracket && before.match(/<([A-Z][a-zA-Z0-9]*)$/);
-          var bareUpper =
+          const bareUpper =
             !afterBracket && before.match(/(?:^|[\s{(,])([A-Z][a-zA-Z0-9]*)$/);
-          var compTyped = upperMatch
+          const compTyped = upperMatch
             ? upperMatch[1]
             : bareUpper
               ? bareUpper[1]
@@ -322,9 +322,9 @@
 
           if (compTyped || (!typed && afterBracket)) {
             // Fetch component names from registry (cached on window)
-            var reg = window.__fcComponentNames || [];
-            for (var c = 0; c < reg.length; c++) {
-              var name = reg[c];
+            const reg = window.__fcComponentNames || [];
+            for (let c = 0; c < reg.length; c++) {
+              const name = reg[c];
               if (seen.has(name)) continue;
               if (compTyped && name.indexOf(compTyped) !== 0) continue;
               if (
@@ -396,16 +396,16 @@
       window.__fcAttachSelfClose = function (editor) {
         editor.onDidChangeModelContent(function (e) {
           if (e.changes.length !== 1) return;
-          var ch = e.changes[0];
+          const ch = e.changes[0];
           if (ch.text !== "/") return;
-          var model = editor.getModel();
+          const model = editor.getModel();
           if (!model) return;
-          var lineNum = ch.range.startLineNumber;
-          var line = model.getLineContent(lineNum);
+          const lineNum = ch.range.startLineNumber;
+          const line = model.getLineContent(lineNum);
           // Pattern 1: <tag>/</tag>  (cursor was between > and </)
           // Pattern 2: <tag/></tag>  (cursor was before > in opening tag)
-          var m = line.match(/^(.*)<([a-zA-Z][a-zA-Z0-9]*)>\/<\/\2>(.*)$/);
-          var matchStr, tag, prefix;
+          let m = line.match(/^(.*)<([a-zA-Z][a-zA-Z0-9]*)>\/<\/\2>(.*)$/);
+          let matchStr, tag, prefix;
           if (m) {
             prefix = m[1];
             tag = m[2];
@@ -417,10 +417,10 @@
             tag = m[2];
             matchStr = "<" + tag + "/></" + tag + ">";
           }
-          var startCol = prefix.length + 1;
-          var endCol = startCol + matchStr.length;
-          var replacement = "<" + tag + " />";
-          var cursorCol = startCol + replacement.length - 2;
+          const startCol = prefix.length + 1;
+          const endCol = startCol + matchStr.length;
+          const replacement = "<" + tag + " />";
+          const cursorCol = startCol + replacement.length - 2;
           setTimeout(function () {
             editor.executeEdits("self-close-collapse", [
               {
@@ -454,10 +454,72 @@
       }
       refreshComponentNames();
 
+      // Fetch utility nodes + their parsed top-level symbols.
+      // Window cache shape: { byNode: { utilName: [symbol, ...] }, allSymbols: [..] }
+      window.__fcRefreshUtilities = function () {
+        $.getJSON("portal-react/utilities", function (reg) {
+          const byNode = {};
+          const all = new Set();
+          Object.keys(reg).forEach(function (n) {
+            const syms = reg[n].symbols || [];
+            byNode[n] = syms;
+            syms.forEach(function (s) { all.add(s); });
+          });
+          window.__fcUtilities = { byNode: byNode, allSymbols: [...all] };
+          console.log(
+            PREFIX,
+            "utilities loaded: " + Object.keys(byNode).length + " nodes, " + all.size + " symbols",
+          );
+        }).fail(function () {
+          window.__fcUtilities = { byNode: {}, allSymbols: [] };
+        });
+      };
+      window.__fcRefreshUtilities();
+
+      // Utility-symbol completion: suggests bare identifiers anywhere in JS
+      // context EXCEPT after "<" (that's JSX tag completion, handled below).
+      monaco.languages.registerCompletionItemProvider("javascript", {
+        triggerCharacters: ["."], // jQuery-ish — but we mostly fire from word context
+        provideCompletionItems: function (model, position) {
+          const line = model.getLineContent(position.lineNumber);
+          const before = line.substring(0, position.column - 1);
+          // Skip JSX tag context — covered by other providers
+          if (/<[a-zA-Z]*$/.test(before)) return { suggestions: [] };
+          // Skip property access — let Monaco's language service handle it
+          if (/\.\s*\w*$/.test(before)) return { suggestions: [] };
+          // Skip inside strings
+          if (/["'`][^"'`]*$/.test(before)) return { suggestions: [] };
+          const wordMatch = before.match(/([A-Za-z_$][\w$]*)$/);
+          const word = wordMatch ? wordMatch[1] : "";
+          const all = (window.__fcUtilities && window.__fcUtilities.allSymbols) || [];
+          if (!all.length) return { suggestions: [] };
+          const range = {
+            startLineNumber: position.lineNumber,
+            endLineNumber: position.lineNumber,
+            startColumn: position.column - word.length,
+            endColumn: position.column,
+          };
+          const suggestions = [];
+          for (let i = 0; i < all.length; i++) {
+            const sym = all[i];
+            if (word && sym.indexOf(word) !== 0) continue;
+            suggestions.push({
+              label: sym,
+              kind: monaco.languages.CompletionItemKind.Function,
+              insertText: sym,
+              range: range,
+              detail: "fc-portal-utility",
+              sortText: "1" + sym,
+            });
+          }
+          return { suggestions: suggestions };
+        },
+      });
+
       // Marker listener for debugging
       monaco.editor.onDidChangeMarkers(function (uris) {
         uris.forEach(function (uri) {
-          var markers = monaco.editor.getModelMarkers({ resource: uri });
+          const markers = monaco.editor.getModelMarkers({ resource: uri });
           if (markers.length > 0) {
             console.group(PREFIX + " MARKERS on " + uri.toString());
             markers.forEach(function (m) {
@@ -486,8 +548,8 @@
     }
 
     function applyCompilerAndDiag() {
-      var jsDef = monaco.typescript.javascriptDefaults;
-      var compilerOpts = {
+      const jsDef = monaco.typescript.javascriptDefaults;
+      const compilerOpts = {
         jsx: monaco.typescript.JsxEmit.React,
         target: monaco.typescript.ScriptTarget.ESNext,
         module: monaco.typescript.ModuleKind.ESNext,
@@ -497,7 +559,7 @@
       console.log(PREFIX, "setCompilerOptions:", JSON.stringify(compilerOpts));
       jsDef.setCompilerOptions(compilerOpts);
 
-      var diagOpts = {
+      const diagOpts = {
         noSemanticValidation: true,
         // Server-side esbuild does the real syntax check at deploy time;
         // Monaco's TS parser produces noisy false positives on raw JSX
@@ -537,7 +599,7 @@
         cb();
         return;
       }
-      var s = document.createElement("script");
+      const s = document.createElement("script");
       s.src = "portal-react/vs/loader.js";
       s.onload = function () {
         console.log(PREFIX, "loader.js loaded, configuring require paths");
@@ -590,9 +652,9 @@
 
 <script type="text/javascript">
   (function () {
-    var compEditorInstance = null;
+    let compEditorInstance = null;
 
-    var COMP_STARTER = [
+    const COMP_STARTER = [
       "function StatusCard({ label, value, unit }) {",
       "  return (",
       '    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-6">',
@@ -622,8 +684,8 @@
       },
 
       oneditprepare: function () {
-        var node = this;
-        var code = node.compCode || COMP_STARTER;
+        const node = this;
+        const code = node.compCode || COMP_STARTER;
         console.log("[FC-Monaco] COMP oneditprepare, node.id=" + node.id);
 
         if (!window.__fcTwClasses) {
@@ -657,14 +719,14 @@
           );
           window.__fcApplyJsxDefaults();
 
-          var compUri = monaco.Uri.parse("file:///fc-comp-" + node.id + ".jsx");
+          const compUri = monaco.Uri.parse("file:///fc-comp-" + node.id + ".jsx");
           console.log("[FC-Monaco] COMP: model URI=" + compUri.toString());
-          var existingModel = monaco.editor.getModel(compUri);
+          const existingModel = monaco.editor.getModel(compUri);
           if (existingModel) {
             console.log("[FC-Monaco] COMP: disposing existing model");
             existingModel.dispose();
           }
-          var compModel = monaco.editor.createModel(
+          const compModel = monaco.editor.createModel(
             code,
             "javascript",
             compUri,
@@ -682,7 +744,7 @@
 
           // Log markers after a short delay (diagnostics are async)
           setTimeout(function () {
-            var markers = monaco.editor.getModelMarkers({ resource: compUri });
+            const markers = monaco.editor.getModelMarkers({ resource: compUri });
             console.log(
               "[FC-Monaco] COMP: markers after 500ms, count=" + markers.length,
             );
@@ -710,7 +772,7 @@
 
       oneditsave: function () {
         console.log("[FC-Monaco] COMP oneditsave");
-        var code = compEditorInstance
+        const code = compEditorInstance
           ? compEditorInstance.getValue()
           : $("#fcc-fallback").val();
         $("#node-input-compCode").val(code);
@@ -734,7 +796,7 @@
       },
 
       oneditresize: function (size) {
-        var h = size.height - 180;
+        let h = size.height - 180;
         if (h < 150) h = 150;
         $("#fcc-editor-wrap").css("height", h + "px");
         if (compEditorInstance) compEditorInstance.layout();
@@ -773,6 +835,198 @@
 </script>
 
 <!-- ============================================================
+     fc-portal-utility – canvas node (helpers / hooks / constants)
+     ============================================================ -->
+<script type="text/html" data-template-name="fc-portal-utility">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Label on canvas" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-utilName"><i class="fa fa-wrench"></i> Module name</label>
+    <input type="text" id="node-input-utilName" placeholder="mathHelpers" />
+  </div>
+  <div class="form-row" style="margin-bottom:4px;">
+    <label><i class="fa fa-code"></i> Code</label>
+    <div style="font-size:11px;opacity:.5;margin-top:2px;">
+      Top-level helpers, custom hooks and constants. Available globally to portals
+      that reference any of the symbols declared here.
+    </div>
+  </div>
+  <div class="form-row node-text-editor-row">
+    <div
+      id="fcu-editor-wrap"
+      style="width:100%;height:350px;border:1px solid var(--red-ui-form-input-border-color,#555);border-radius:4px;overflow:hidden;position:relative;"
+    >
+      <div id="fcu-monaco" style="width:100%;height:100%;"></div>
+      <textarea
+        id="fcu-fallback"
+        style="display:none;width:100%;height:100%;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;background:#1e1e1e;color:#d4d4d4;border:none;padding:12px;resize:none;"
+      ></textarea>
+    </div>
+  </div>
+  <input type="hidden" id="node-input-utilCode" />
+</script>
+
+<script type="text/javascript">
+  (function () {
+    let utilEditorInstance = null;
+
+    const UTIL_STARTER = [
+      "// Helpers / custom hooks / constants — top-level, no React component.",
+      "// Each symbol declared here is available globally in any portal that",
+      "// references it (selective inclusion: unused utility nodes are skipped).",
+      "",
+      "const PI2 = Math.PI * 2;",
+      "",
+      "function clamp(n, min, max) {",
+      "  return Math.max(min, Math.min(max, n));",
+      "}",
+      "",
+      "// Custom React hook — call from inside App() or library components",
+      "function useDebounce(value, ms = 300) {",
+      "  const [v, setV] = React.useState(value);",
+      "  React.useEffect(() => {",
+      "    const t = setTimeout(() => setV(value), ms);",
+      "    return () => clearTimeout(t);",
+      "  }, [value, ms]);",
+      "  return v;",
+      "}",
+    ].join("\n");
+
+    RED.nodes.registerType("fc-portal-utility", {
+      category: "fromcubes",
+      color: "#fbbf24",
+      defaults: {
+        name: { value: "" },
+        utilName: { value: "myHelpers", required: true },
+        utilCode: { value: UTIL_STARTER },
+      },
+      inputs: 0,
+      outputs: 0,
+      icon: "font-awesome/fa-wrench",
+      paletteLabel: "fromcubes utility",
+      label: function () {
+        return this.name || this.utilName || "utility";
+      },
+
+      oneditprepare: function () {
+        const node = this;
+        const code = node.utilCode || UTIL_STARTER;
+        console.log("[FC-Monaco] UTIL oneditprepare, node.id=" + node.id);
+
+        if (!window.__fcTwClasses) {
+          $.getJSON("portal-react/tw-classes", function (classes) {
+            window.__fcTwClasses = classes;
+          });
+        }
+
+        window.__fcLoadMonaco(function (failed) {
+          if (failed) {
+            $("#fcu-monaco").hide();
+            $("#fcu-fallback").show().val(code);
+            return;
+          }
+          window.__fcApplyJsxDefaults();
+
+          const utilUri = monaco.Uri.parse("file:///fc-util-" + node.id + ".js");
+          const existingModel = monaco.editor.getModel(utilUri);
+          if (existingModel) existingModel.dispose();
+          const utilModel = monaco.editor.createModel(code, "javascript", utilUri);
+
+          utilEditorInstance = monaco.editor.create(
+            document.getElementById("fcu-monaco"),
+            Object.assign({ model: utilModel }, window.__fcEditorOpts),
+          );
+        });
+      },
+
+      oneditsave: function () {
+        const code = utilEditorInstance
+          ? utilEditorInstance.getValue()
+          : $("#fcu-fallback").val();
+        $("#node-input-utilCode").val(code);
+        this.utilCode = code;
+        if (utilEditorInstance) {
+          utilEditorInstance.getModel().dispose();
+          utilEditorInstance.dispose();
+          utilEditorInstance = null;
+        }
+      },
+
+      oneditcancel: function () {
+        if (utilEditorInstance) {
+          utilEditorInstance.getModel().dispose();
+          utilEditorInstance.dispose();
+          utilEditorInstance = null;
+        }
+      },
+
+      oneditresize: function (size) {
+        let h = size.height - 200;
+        if (h < 150) h = 150;
+        $("#fcu-editor-wrap").css("height", h + "px");
+        if (utilEditorInstance) utilEditorInstance.layout();
+      },
+    });
+  })();
+</script>
+
+<script type="text/html" data-help-name="fc-portal-utility">
+  <p>
+    Defines shared <strong>helpers</strong>, <strong>custom hooks</strong> and
+    <strong>constants</strong> available to all <strong>portal-react</strong>
+    nodes. Unlike <code>fc-portal-component</code>, the code is injected raw at
+    top level (no IIFE wrapper) — a single utility node may declare many symbols.
+  </p>
+  <h3>Properties</h3>
+  <dl>
+    <dt>Module name</dt>
+    <dd>
+      Identifier for this utility node. Shares a namespace with
+      <code>fc-portal-component</code> names — must be unique across all
+      components and utilities.
+    </dd>
+    <dt>Code</dt>
+    <dd>
+      Top-level JavaScript: <code>const</code>, <code>let</code>,
+      <code>function</code>, <code>class</code> declarations. <code>import</code>
+      statements at the top are auto-hoisted into the bundle.
+    </dd>
+  </dl>
+  <h3>Selective inclusion</h3>
+  <p>
+    A utility node is bundled into a portal only when the portal's JSX (or any
+    of its referenced library components) mentions at least one of the symbols
+    declared in the utility. Unused utility nodes are skipped.
+  </p>
+  <p>
+    Group related symbols in one node — referencing any one symbol pulls in the
+    whole node's code. Split unrelated helpers across multiple nodes for finer
+    granularity.
+  </p>
+  <h3>Example</h3>
+  <pre>function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+function useDebounce(value, ms = 300) {
+  const [v, setV] = React.useState(value);
+  React.useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}</pre>
+  <p>
+    Then in any <strong>portal-react</strong> node:
+  </p>
+  <pre>function App() {
+  const { data } = useNodeRed();
+  const slow = useDebounce(data?.value);
+  return &lt;div&gt;{clamp(slow ?? 0, 0, 100)}&lt;/div&gt;;
+}</pre>
+</script>
+
+<!-- ============================================================
      portal-react – main node
      ============================================================ -->
 <script type="text/html" data-template-name="portal-react">
@@ -801,6 +1055,9 @@
         </button>
         <button type="button" class="red-ui-button" id="fc-btn-components">
           <i class="fa fa-cube"></i> Components
+        </button>
+        <button type="button" class="red-ui-button" id="fc-btn-utilities">
+          <i class="fa fa-wrench"></i> Utilities
         </button>
         <span style="flex:1"></span>
         <button type="button" class="red-ui-button" id="fc-btn-preview">
@@ -909,10 +1166,10 @@
 
 <script type="text/javascript">
   (function () {
-    var editorInstance = null;
-    var headEditorInstance = null;
+    let editorInstance = null;
+    let headEditorInstance = null;
 
-    var STARTER = [
+    const STARTER = [
       "// useNodeRed() \u2192 { data, send, portalClient }",
       "//   data  = last msg.payload from input wire",
       "//   send(payload, topic?) = push msg to output wire",
@@ -949,15 +1206,15 @@
           required: true,
           validate: function (v) {
             if (typeof v !== "string") return false;
-            var t = v.trim();
+            const t = v.trim();
             if (t.length === 0) return false;
             if (/\s/.test(t)) return false;
             if (t.charAt(0) === "/" || t.charAt(t.length - 1) === "/") return false;
-            var segs = t.split("/");
-            for (var i = 0; i < segs.length; i++) {
-              var s = segs[i];
+            const segs = t.split("/");
+            for (let i = 0; i < segs.length; i++) {
+              const s = segs[i];
               if (!s || s === "." || s === "..") return false;
-              var lower = s.toLowerCase();
+              const lower = s.toLowerCase();
               if (lower === "public" || lower === "_ws") return false;
               if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(s)) return false;
             }
@@ -981,9 +1238,9 @@
       },
 
       oneditprepare: function () {
-        var node = this;
-        var code = node.componentCode || STARTER;
-        var headCode = node.customHead || "";
+        const node = this;
+        const code = node.componentCode || STARTER;
+        const headCode = node.customHead || "";
         console.log("[FC-Monaco] PORTAL oneditprepare, node.id=" + node.id);
 
         if (!window.__fcTwClasses) {
@@ -1003,7 +1260,7 @@
         }
 
         // Tabs
-        var fcTabs = RED.tabs.create({
+        const fcTabs = RED.tabs.create({
           id: "fc-tabs",
           onchange: function (tab) {
             $(".fc-tab-pane").hide();
@@ -1021,8 +1278,8 @@
 
         // Legacy endpoint detection + convenience pre-fill
         if (node.endpoint && typeof node.endpoint === "string") {
-          var legacy = node.endpoint;
-          var prefix = "/fromcubes/";
+          const legacy = node.endpoint;
+          const prefix = "/fromcubes/";
           if (legacy.indexOf(prefix) === 0) {
             if (!node.subPath) {
               $("#node-input-subPath").val(legacy.slice(prefix.length));
@@ -1040,8 +1297,8 @@
 
         // URL hint
         function updateHint() {
-          var sp = ($("#node-input-subPath").val() || "").trim();
-          var root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
+          const sp = ($("#node-input-subPath").val() || "").trim();
+          const root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
           if (sp) {
             $("#fc-url-hint")
               .css("color", "")
@@ -1061,15 +1318,15 @@
         updateHint();
 
         // Modules editableList (like function node's libs)
-        var libsList = node.libs || [];
+        const libsList = node.libs || [];
         $("#node-input-libs-container").css("min-height","68px").editableList({
           addItem: function(container, i, opt) {
-            var lib = opt || {};
-            var row = $('<div/>',{style:"display:flex;gap:8px;align-items:center;"}).appendTo(container);
-            var modInput = $('<input/>',{type:"text",placeholder:"e.g. chart.js/auto@^4.4.0",style:"flex:1;"}).appendTo(row);
-            var varInput = $('<input/>',{type:"text",placeholder:"Import as (e.g. Chart)",style:"width:140px;"}).appendTo(row);
+            const lib = opt || {};
+            const row = $('<div/>',{style:"display:flex;gap:8px;align-items:center;"}).appendTo(container);
+            const modInput = $('<input/>',{type:"text",placeholder:"e.g. chart.js/auto@^4.4.0",style:"flex:1;"}).appendTo(row);
+            const varInput = $('<input/>',{type:"text",placeholder:"Import as (e.g. Chart)",style:"width:140px;"}).appendTo(row);
             modInput.val(lib.module || "");
-            varInput.val(lib.var || "");
+            varInput.val(lib.const || "");
             container.data("mod", modInput);
             container.data("var", varInput);
           },
@@ -1097,18 +1354,18 @@
             "[FC-Monaco] PORTAL: applying JSX defaults before model creation",
           );
           window.__fcApplyJsxDefaults();
-          var opts = window.__fcEditorOpts;
+          const opts = window.__fcEditorOpts;
 
-          var jsxUri = monaco.Uri.parse(
+          const jsxUri = monaco.Uri.parse(
             "file:///fc-portal-" + node.id + ".jsx",
           );
           console.log("[FC-Monaco] PORTAL: JSX model URI=" + jsxUri.toString());
-          var existingJsx = monaco.editor.getModel(jsxUri);
+          const existingJsx = monaco.editor.getModel(jsxUri);
           if (existingJsx) {
             console.log("[FC-Monaco] PORTAL: disposing existing JSX model");
             existingJsx.dispose();
           }
-          var jsxModel = monaco.editor.createModel(code, "javascript", jsxUri);
+          const jsxModel = monaco.editor.createModel(code, "javascript", jsxUri);
           console.log(
             "[FC-Monaco] PORTAL: JSX model created, language=" +
               jsxModel.getLanguageId(),
@@ -1121,12 +1378,12 @@
           if (window.__fcAttachSelfClose)
             window.__fcAttachSelfClose(editorInstance);
 
-          var headUri = monaco.Uri.parse(
+          const headUri = monaco.Uri.parse(
             "file:///fc-head-" + node.id + ".html",
           );
-          var existingHead = monaco.editor.getModel(headUri);
+          const existingHead = monaco.editor.getModel(headUri);
           if (existingHead) existingHead.dispose();
-          var headModel = monaco.editor.createModel(headCode, "html", headUri);
+          const headModel = monaco.editor.createModel(headCode, "html", headUri);
           headEditorInstance = monaco.editor.create(
             document.getElementById("fc-head-monaco"),
             Object.assign({ model: headModel }, opts),
@@ -1135,7 +1392,7 @@
 
           // Log markers after a short delay (diagnostics are async)
           setTimeout(function () {
-            var markers = monaco.editor.getModelMarkers({ resource: jsxUri });
+            const markers = monaco.editor.getModelMarkers({ resource: jsxUri });
             console.log(
               "[FC-Monaco] PORTAL: markers after 500ms, count=" +
                 markers.length,
@@ -1184,14 +1441,14 @@
         });
 
         $("#fc-btn-preview").on("click", function () {
-          var sp = ($("#node-input-subPath").val() || "").trim();
-          var root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
+          const sp = ($("#node-input-subPath").val() || "").trim();
+          const root = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
           if (sp) window.open(root + "/fromcubes/" + sp, "_blank");
         });
 
         $("#fc-btn-components").on("click", function () {
           $.getJSON("portal-react/registry", function (reg) {
-            var names = Object.keys(reg).sort();
+            const names = Object.keys(reg).sort();
             if (!names.length) {
               RED.notify("No component nodes on canvas.", "warning");
               return;
@@ -1199,12 +1456,12 @@
 
             function extractProps(code) {
               if (!code) return [];
-              var m = code.match(/function\s+\w+\s*\(\s*\{([^}]*)\}/);
+              const m = code.match(/function\s+\w+\s*\(\s*\{([^}]*)\}/);
               if (!m) return [];
               return m[1].split(",").map(function (s) { return s.trim().split(/\s*=\s*/)[0]; }).filter(Boolean);
             }
 
-            var html =
+            let html =
               '<div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">' +
               '<input type="text" id="fc-comp-search" placeholder="Search..." ' +
               'style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;border:1px solid rgba(128,128,128,.4);border-radius:3px;' +
@@ -1212,16 +1469,16 @@
               '<div id="fc-comp-list" style="flex:1;overflow-y:auto;">';
 
             names.forEach(function (n) {
-              var c = reg[n];
-              var props = extractProps(c.code);
-              var detailParts = [];
+              const c = reg[n];
+              const props = extractProps(c.code);
+              const detailParts = [];
               if (props.length) {
                 detailParts.push('<div style="margin:4px 0 0 0;font-size:11px;opacity:.6;">' +
                   props.map(function (p) {
                     return '<code style="background:rgba(128,128,128,.15);padding:0 4px;border-radius:2px;margin-right:3px;">' + p + '</code>';
                   }).join("") + '</div>');
               }
-              var hasDetail = detailParts.length > 0;
+              const hasDetail = detailParts.length > 0;
 
               html +=
                 '<div class="fc-comp-item" data-name="' + n + '" data-search="' + n.toLowerCase() + '" ' +
@@ -1235,7 +1492,7 @@
             });
             html += '</div></div>';
 
-            var $dlg = $("<div></div>").html(html).dialog({
+            const $dlg = $("<div></div>").html(html).dialog({
               title: "Components",
               modal: true,
               width: 380,
@@ -1247,7 +1504,7 @@
 
             // Search
             $dlg.find("#fc-comp-search").on("input", function () {
-              var q = $(this).val().toLowerCase();
+              const q = $(this).val().toLowerCase();
               $dlg.find(".fc-comp-item").each(function () {
                 $(this).toggle($(this).data("search").indexOf(q) !== -1);
               });
@@ -1263,24 +1520,24 @@
             // Arrow toggle detail
             $dlg.on("click", ".fc-comp-arrow", function (e) {
               e.stopPropagation();
-              var $item = $(this).closest(".fc-comp-item");
-              var $detail = $item.find(".fc-comp-detail");
-              var open = $detail.is(":visible");
+              const $item = $(this).closest(".fc-comp-item");
+              const $detail = $item.find(".fc-comp-detail");
+              const open = $detail.is(":visible");
               $detail.slideToggle(100);
               $(this).css("transform", open ? "" : "rotate(90deg)");
             });
 
             // Click name: delete selection, insert <Tag></Tag> in one line, cursor between tags
             $dlg.on("click", ".fc-comp-name", function () {
-              var name = $(this).data("name");
-              var openTag = "<" + name + ">";
-              var closeTag = "</" + name + ">";
-              var text = openTag + closeTag;
+              const name = $(this).data("name");
+              const openTag = "<" + name + ">";
+              const closeTag = "</" + name + ">";
+              const text = openTag + closeTag;
               $dlg.dialog("close");
               if (editorInstance) {
-                var sel = editorInstance.getSelection();
-                var startLine = sel.startLineNumber;
-                var startCol = sel.startColumn;
+                const sel = editorInstance.getSelection();
+                const startLine = sel.startLineNumber;
+                const startCol = sel.startColumn;
                 editorInstance.executeEdits("fc-components", [{
                   range: sel,
                   text: text,
@@ -1290,11 +1547,123 @@
                   editorInstance.focus();
                 }, 50);
               } else {
-                var ta = $("#fc-fallback")[0];
-                var s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
+                const ta = $("#fc-fallback")[0];
+                const s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
                 ta.value = v.slice(0, s) + text + v.slice(e);
                 setTimeout(function () {
                   ta.selectionStart = ta.selectionEnd = s + openTag.length;
+                  ta.focus();
+                }, 50);
+              }
+            });
+          });
+        });
+
+        $("#fc-btn-utilities").on("click", function () {
+          $.getJSON("portal-react/utilities", function (reg) {
+            // Refresh global cache too so completion provider picks up changes
+            if (window.__fcRefreshUtilities) window.__fcRefreshUtilities();
+            const names = Object.keys(reg).sort();
+            if (!names.length) {
+              RED.notify("No utility nodes on canvas.", "warning");
+              return;
+            }
+
+            let html =
+              '<div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">' +
+              '<input type="text" id="fc-util-search" placeholder="Search..." ' +
+              'style="width:100%;box-sizing:border-box;margin-bottom:6px;padding:5px 8px;border:1px solid rgba(128,128,128,.4);border-radius:3px;' +
+              'background:var(--red-ui-form-input-background-color,#fff);color:var(--red-ui-form-text-color,#333);font-size:12px;flex-shrink:0;" />' +
+              '<div id="fc-util-list" style="flex:1;overflow-y:auto;">';
+
+            names.forEach(function (n) {
+              const u = reg[n];
+              const syms = u.symbols || [];
+              const errBadge = u.error
+                ? '<span style="margin-left:6px;font-size:10px;color:#ef4444;" title="' +
+                  String(u.error).replace(/"/g, "&quot;") + '">syntax error</span>'
+                : "";
+              const symBadges = syms.map(function (s) {
+                return '<span class="fc-util-sym" data-sym="' + s +
+                  '" style="display:inline-block;background:rgba(251,191,36,.15);border:1px solid rgba(251,191,36,.35);' +
+                  'padding:1px 6px;border-radius:3px;margin:2px 4px 2px 0;font-size:11px;font-family:monospace;cursor:pointer;">' +
+                  s + '</span>';
+              }).join("");
+              const detail = syms.length
+                ? '<div style="margin:4px 0 0 0;">' + symBadges + '</div>'
+                : '<div style="margin:4px 0 0 0;font-size:11px;opacity:.5;">(no top-level symbols detected)</div>';
+              const searchKey = (n + " " + syms.join(" ")).toLowerCase();
+
+              html +=
+                '<div class="fc-util-item" data-name="' + n + '" data-search="' + searchKey + '" ' +
+                'style="border-bottom:1px solid rgba(128,128,128,.1);">' +
+                '<div style="display:flex;align-items:center;padding:4px 6px;cursor:pointer;" class="fc-util-row">' +
+                '<i class="fa fa-caret-right fc-util-arrow" style="width:14px;opacity:.4;font-size:12px;transition:transform .15s;"></i>' +
+                '<i class="fa fa-wrench" style="width:14px;color:#fbbf24;font-size:11px;"></i>' +
+                '<span style="font-weight:600;font-size:12px;flex:1;margin-left:4px;">' + n + '</span>' +
+                errBadge +
+                '</div>' +
+                '<div class="fc-util-detail" style="display:none;padding:0 6px 6px 32px;">' + detail + '</div>' +
+                '</div>';
+            });
+            html += '</div></div>';
+
+            const $dlg = $("<div></div>").html(html).dialog({
+              title: "Utilities",
+              modal: true,
+              width: 420,
+              buttons: [
+                { text: "Close", click: function () { $(this).dialog("close"); } },
+              ],
+              close: function () { $(this).remove(); },
+            });
+
+            $dlg.find("#fc-util-search").on("input", function () {
+              const q = $(this).val().toLowerCase();
+              $dlg.find(".fc-util-item").each(function () {
+                $(this).toggle($(this).data("search").indexOf(q) !== -1);
+              });
+            }).focus();
+
+            $dlg.on("mouseenter", ".fc-util-row", function () {
+              $(this).css("background", "rgba(251,191,36,.08)");
+            }).on("mouseleave", ".fc-util-row", function () {
+              $(this).css("background", "");
+            });
+
+            $dlg.on("click", ".fc-util-row", function (e) {
+              if ($(e.target).closest(".fc-util-sym").length) return;
+              const $item = $(this).closest(".fc-util-item");
+              const $detail = $item.find(".fc-util-detail");
+              const $arrow = $item.find(".fc-util-arrow");
+              const open = $detail.is(":visible");
+              $detail.slideToggle(100);
+              $arrow.css("transform", open ? "" : "rotate(90deg)");
+            });
+
+            // Click symbol → insert bare identifier at cursor
+            $dlg.on("click", ".fc-util-sym", function (e) {
+              e.stopPropagation();
+              const sym = $(this).data("sym");
+              $dlg.dialog("close");
+              if (editorInstance) {
+                const sel = editorInstance.getSelection();
+                const startLine = sel.startLineNumber;
+                const startCol = sel.startColumn;
+                editorInstance.executeEdits("fc-utilities", [{
+                  range: sel,
+                  text: sym,
+                }]);
+                setTimeout(function () {
+                  editorInstance.setPosition({ lineNumber: startLine, column: startCol + sym.length });
+                  editorInstance.focus();
+                }, 50);
+              } else {
+                const ta = $("#fc-fallback")[0];
+                const s = ta.selectionStart, en = ta.selectionEnd, v = ta.value;
+                ta.value = v.slice(0, s) + sym + v.slice(en);
+                setTimeout(function () {
+                  ta.selectionStart = ta.selectionEnd = s + sym.length;
                   ta.focus();
                 }, 50);
               }
@@ -1312,24 +1681,24 @@
         this.subPath = ($("#node-input-subPath").val() || "").trim();
 
         // Collect libs from editableList
-        var libs = [];
-        var items = $("#node-input-libs-container").editableList("items");
+        const libs = [];
+        const items = $("#node-input-libs-container").editableList("items");
         items.each(function() {
-          var mod = $(this).data("mod").val().trim();
-          var v = $(this).data("var").val().trim();
+          const mod = $(this).data("mod").val().trim();
+          const v = $(this).data("var").val().trim();
           if (mod) {
             libs.push({ module: mod, var: v });
           }
         });
         this.libs = libs;
 
-        var code = editorInstance
+        const code = editorInstance
           ? editorInstance.getValue()
           : $("#fc-fallback").val();
         $("#node-input-componentCode").val(code);
         this.componentCode = code;
 
-        var head = headEditorInstance
+        const head = headEditorInstance
           ? headEditorInstance.getValue()
           : $("#fc-head-fallback").val();
         $("#node-input-customHead").val(head);
@@ -1366,11 +1735,11 @@
       },
 
       oneditresize: function (size) {
-        var tabsH = $("#fc-tabs").outerHeight(true) || 0;
-        var rows = $(
+        const tabsH = $("#fc-tabs").outerHeight(true) || 0;
+        const rows = $(
           "#dialog-form>div:not(#fc-tabs-content):not(:has(#fc-tabs))",
         );
-        var h = size.height;
+        let h = size.height;
         rows.each(function () {
           h -= $(this).outerHeight(true);
         });
@@ -1507,8 +1876,8 @@ const { data, send, user, portalClient } = useNodeRed();
 <script type="text/javascript">
 (function () {
   // Resolve httpNodeRoot for public URL prefix
-  var nodeRoot = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
-  var publicBase = nodeRoot + "/fromcubes/public/";
+  const nodeRoot = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
+  const publicBase = nodeRoot + "/fromcubes/public/";
 
   function formatSize(bytes) {
     if (bytes < 1024) return bytes + " B";
@@ -1516,15 +1885,15 @@ const { data, send, user, portalClient } = useNodeRed();
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   }
 
-  var allEntries = [];
-  var collapsed = {};
+  let allEntries = [];
+  const collapsed = {};
 
-  var content = $('<div class="red-ui-sidebar-info" style="height:100%;overflow:auto;padding:0;"></div>');
-  var fileList = $('<div style="padding:0;"></div>').appendTo(content);
+  const content = $('<div class="red-ui-sidebar-info" style="height:100%;overflow:auto;padding:0;"></div>');
+  const fileList = $('<div style="padding:0;"></div>').appendTo(content);
 
   // ── Toolbar ──
-  var toolbar = $('<div style="display:flex;align-items:center;gap:6px;margin:0 6px;padding:2px 0 0;"></div>');
-  var fileInput = $('<input type="file" multiple style="display:none;">').appendTo(toolbar);
+  const toolbar = $('<div style="display:flex;align-items:center;gap:6px;margin:0 6px;padding:2px 0 0;"></div>');
+  const fileInput = $('<input type="file" multiple style="display:none;">').appendTo(toolbar);
   $('<button class="red-ui-button red-ui-button-small" style="flex-shrink:0;"><i class="fa fa-upload"></i> Upload</button>')
     .on("click", function (e) { e.preventDefault(); fileInput.trigger("click"); })
     .appendTo(toolbar);
@@ -1534,7 +1903,7 @@ const { data, send, user, portalClient } = useNodeRed();
 
   // ── Helpers ──
   function pathExists(p) {
-    for (var i = 0; i < allEntries.length; i++) {
+    for (let i = 0; i < allEntries.length; i++) {
       if (allEntries[i].name === p) return true;
     }
     return false;
@@ -1542,10 +1911,10 @@ const { data, send, user, portalClient } = useNodeRed();
 
   function uploadFiles(files, targetDir) {
     if (!files || files.length === 0) return;
-    var toUpload = [];
-    var duplicates = [];
-    for (var i = 0; i < files.length; i++) {
-      var uploadPath = targetDir ? targetDir + "/" + files[i].name : files[i].name;
+    let toUpload = [];
+    const duplicates = [];
+    for (let i = 0; i < files.length; i++) {
+      const uploadPath = targetDir ? targetDir + "/" + files[i].name : files[i].name;
       if (pathExists(uploadPath)) {
         duplicates.push({ file: files[i], path: uploadPath });
       } else {
@@ -1553,15 +1922,15 @@ const { data, send, user, portalClient } = useNodeRed();
       }
     }
     if (duplicates.length > 0) {
-      var names = duplicates.map(function (d) { return d.file.name; }).join(", ");
+      const names = duplicates.map(function (d) { return d.file.name; }).join(", ");
       if (confirm("These files already exist: " + names + "\nOverwrite?")) {
         toUpload = toUpload.concat(duplicates);
       }
     }
     if (toUpload.length === 0) return;
-    var pending = toUpload.length;
+    let pending = toUpload.length;
     toUpload.forEach(function (item) {
-      var reader = new FileReader();
+      const reader = new FileReader();
       reader.onload = function () {
         $.ajax({
           type: "POST",
@@ -1601,15 +1970,15 @@ const { data, send, user, portalClient } = useNodeRed();
     e.preventDefault();
     e.stopPropagation();
     content.css("background", "");
-    var dt = e.originalEvent.dataTransfer;
+    const dt = e.originalEvent.dataTransfer;
     if (dt.files && dt.files.length > 0) {
       uploadFiles(dt.files, "");
     }
   });
 
   function moveItem(fromPath, toDir) {
-    var filename = fromPath.split("/").pop();
-    var newPath = toDir ? toDir + "/" + filename : filename;
+    const filename = fromPath.split("/").pop();
+    const newPath = toDir ? toDir + "/" + filename : filename;
     if (fromPath === newPath) return;
     if (pathExists(newPath)) {
       if (!confirm("'" + filename + "' already exists in this folder. Overwrite?")) return;
@@ -1620,7 +1989,7 @@ const { data, send, user, portalClient } = useNodeRed();
       data: JSON.stringify({ from: fromPath, to: newPath }),
       success: function () { refreshList(); },
       error: function (xhr) {
-        var msg = xhr.responseJSON ? xhr.responseJSON.error : "move failed";
+        const msg = xhr.responseJSON ? xhr.responseJSON.error : "move failed";
         RED.notify("Move failed: " + msg, "error");
       },
     });
@@ -1628,22 +1997,22 @@ const { data, send, user, portalClient } = useNodeRed();
 
   // ── Inline new-folder input ──
   function showNewFolderInput(parentDir) {
-    var existingInput = fileList.find(".fc-new-folder-row");
+    const existingInput = fileList.find(".fc-new-folder-row");
     if (existingInput.length) existingInput.remove();
 
-    var depth = parentDir ? parentDir.split("/").length : 0;
-    var indent = 8 + depth * 18;
-    var row = $('<div class="fc-new-folder-row" style="display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid var(--red-ui-secondary-border-color);background:var(--red-ui-tertiary-background);"></div>');
+    const depth = parentDir ? parentDir.split("/").length : 0;
+    const indent = 8 + depth * 18;
+    const row = $('<div class="fc-new-folder-row" style="display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid var(--red-ui-secondary-border-color);background:var(--red-ui-tertiary-background);"></div>');
     row.css("padding-left", indent + "px");
     $('<i class="fa fa-folder" style="color:#fbbf24;font-size:13px;width:16px;text-align:center;"></i>').appendTo(row);
-    var inp = $('<input type="text" placeholder="folder name" class="red-ui-searchBox-input" style="flex:1;padding:3px 6px;font-size:12px;">');
+    const inp = $('<input type="text" placeholder="folder name" class="red-ui-searchBox-input" style="flex:1;padding:3px 6px;font-size:12px;">');
     inp.appendTo(row);
-    var okBtn = $('<button class="red-ui-button red-ui-button-small" style="color:var(--red-ui-text-color-success);" title="Create"><i class="fa fa-check"></i></button>');
-    var cancelBtn = $('<button class="red-ui-button red-ui-button-small" title="Cancel"><i class="fa fa-times"></i></button>');
+    const okBtn = $('<button class="red-ui-button red-ui-button-small" style="color:var(--red-ui-text-color-success);" title="Create"><i class="fa fa-check"></i></button>');
+    const cancelBtn = $('<button class="red-ui-button red-ui-button-small" title="Cancel"><i class="fa fa-times"></i></button>');
     function submit() {
-      var name = inp.val().trim();
+      const name = inp.val().trim();
       if (!name) { row.remove(); return; }
-      var p = parentDir ? parentDir + "/" + name : name;
+      const p = parentDir ? parentDir + "/" + name : name;
       if (pathExists(p)) {
         RED.notify("Folder '" + name + "' already exists", "warning");
         return;
@@ -1664,7 +2033,7 @@ const { data, send, user, portalClient } = useNodeRed();
 
     // Insert after the parent folder row, or at top
     if (parentDir) {
-      var parentRow = fileList.find('[data-path="' + parentDir + '"]');
+      const parentRow = fileList.find('[data-path="' + parentDir + '"]');
       if (parentRow.length) { row.insertAfter(parentRow); } else { fileList.prepend(row); }
     } else {
       fileList.prepend(row);
@@ -1673,7 +2042,7 @@ const { data, send, user, portalClient } = useNodeRed();
   }
 
   // ── Context menu (native Node-RED style) ──
-  var activeMenu = null;
+  let activeMenu = null;
   function closeMenu() {
     if (activeMenu) { activeMenu.remove(); activeMenu = null; }
   }
@@ -1681,14 +2050,14 @@ const { data, send, user, portalClient } = useNodeRed();
 
   function showMenu(anchor, items) {
     closeMenu();
-    var menu = $('<ul class="red-ui-menu red-ui-menu-dropdown" style="position:absolute;z-index:10000;display:block;"></ul>');
+    const menu = $('<ul class="red-ui-menu red-ui-menu-dropdown" style="position:absolute;z-index:10000;display:block;"></ul>');
     items.forEach(function (item) {
       if (item.divider) {
         menu.append('<li class="red-ui-menu-divider"></li>');
         return;
       }
-      var li = $('<li></li>');
-      var a = $('<a href="#"></a>');
+      const li = $('<li></li>');
+      const a = $('<a href="#"></a>');
       if (item.danger) a.css("color", "var(--red-ui-text-color-error)");
       a.append('<i class="fa ' + item.icon + '" style="width:18px;text-align:center;"></i> ');
       a.append($('<span class="red-ui-menu-label"></span>').text(item.label));
@@ -1706,32 +2075,32 @@ const { data, send, user, portalClient } = useNodeRed();
     activeMenu = menu;
 
     // Position near the anchor
-    var off = anchor.offset();
-    var top = off.top + anchor.outerHeight() + 2;
-    var left = off.left - menu.outerWidth() + anchor.outerWidth();
+    const off = anchor.offset();
+    let top = off.top + anchor.outerHeight() + 2;
+    let left = off.left - menu.outerWidth() + anchor.outerWidth();
     if (left < 0) left = off.left;
     if (top + menu.outerHeight() > $(window).height()) top = off.top - menu.outerHeight() - 2;
     menu.css({ top: top, left: left });
   }
 
-  var adminRoot = (RED.settings.httpAdminRoot || "/").replace(/\/$/, "");
+  const adminRoot = (RED.settings.httpAdminRoot || "/").replace(/\/$/, "");
 
   function showRenameInput(rowEl, fullPath, currentName) {
-    var nameSpan = rowEl.find("span").filter(function () { return $(this).text() === currentName; }).first();
+    const nameSpan = rowEl.find("span").filter(function () { return $(this).text() === currentName; }).first();
     if (!nameSpan.length) return;
-    var origText = nameSpan.text();
-    var inp = $('<input type="text" class="red-ui-searchBox-input" style="flex:1;padding:3px 6px;font-size:12px;">').val(origText);
-    var okBtn = $('<button class="red-ui-button red-ui-button-small" style="color:var(--red-ui-text-color-success);" title="Save"><i class="fa fa-check"></i></button>');
-    var cancelBtn = $('<button class="red-ui-button red-ui-button-small" title="Cancel"><i class="fa fa-times"></i></button>');
-    var dotIdx = origText.lastIndexOf(".");
-    var hasExt = dotIdx > 0; // has extension (not hidden file)
-    var origExt = hasExt ? origText.slice(dotIdx) : "";
+    const origText = nameSpan.text();
+    const inp = $('<input type="text" class="red-ui-searchBox-input" style="flex:1;padding:3px 6px;font-size:12px;">').val(origText);
+    const okBtn = $('<button class="red-ui-button red-ui-button-small" style="color:var(--red-ui-text-color-success);" title="Save"><i class="fa fa-check"></i></button>');
+    const cancelBtn = $('<button class="red-ui-button red-ui-button-small" title="Cancel"><i class="fa fa-times"></i></button>');
+    const dotIdx = origText.lastIndexOf(".");
+    const hasExt = dotIdx > 0; // has extension (not hidden file)
+    const origExt = hasExt ? origText.slice(dotIdx) : "";
 
     nameSpan.replaceWith(inp);
     inp.after(cancelBtn).after(okBtn);
     inp.focus();
     // Select only the name part before extension
-    var el = inp[0];
+    const el = inp[0];
     if (hasExt && el.setSelectionRange) {
       el.setSelectionRange(0, dotIdx);
     } else {
@@ -1744,22 +2113,22 @@ const { data, send, user, portalClient } = useNodeRed();
       inp.replaceWith($('<span style="flex:1;font-size:12px;word-break:break-all;"></span>').text(origText));
     }
     function submit() {
-      var newName = inp.val().trim();
+      const newName = inp.val().trim();
       if (!newName) {
         RED.notify("Name cannot be empty", "warning");
         return;
       }
       // Warn if extension changed or removed
       if (hasExt) {
-        var newDot = newName.lastIndexOf(".");
-        var newExt = newDot > 0 ? newName.slice(newDot) : "";
+        const newDot = newName.lastIndexOf(".");
+        const newExt = newDot > 0 ? newName.slice(newDot) : "";
         if (newExt.toLowerCase() !== origExt.toLowerCase()) {
           if (!confirm("Extension changed from '" + origExt + "' to '" + (newExt || "none") + "'. Continue?")) return;
         }
       }
       if (newName === origText) { restore(); return; }
-      var parentDir = fullPath.indexOf("/") >= 0 ? fullPath.slice(0, fullPath.lastIndexOf("/")) : "";
-      var newPath = parentDir ? parentDir + "/" + newName : newName;
+      const parentDir = fullPath.indexOf("/") >= 0 ? fullPath.slice(0, fullPath.lastIndexOf("/")) : "";
+      const newPath = parentDir ? parentDir + "/" + newName : newName;
       if (pathExists(newPath)) {
         RED.notify("'" + newName + "' already exists", "warning");
         return;
@@ -1770,7 +2139,7 @@ const { data, send, user, portalClient } = useNodeRed();
         data: JSON.stringify({ from: fullPath, to: newPath }),
         success: function () { refreshList(); },
         error: function (xhr) {
-          var msg = xhr.responseJSON ? xhr.responseJSON.error : "rename failed";
+          const msg = xhr.responseJSON ? xhr.responseJSON.error : "rename failed";
           RED.notify("Rename failed: " + msg, "error");
           restore();
         },
@@ -1787,11 +2156,11 @@ const { data, send, user, portalClient } = useNodeRed();
   // ── Tree rendering ──
   function buildTree(entries) {
     // Build nested structure: { children: { name: { type, children, entry } } }
-    var root = { children: {} };
+    const root = { children: {} };
     entries.forEach(function (e) {
-      var parts = e.name.split("/");
-      var node = root;
-      for (var i = 0; i < parts.length; i++) {
+      const parts = e.name.split("/");
+      let node = root;
+      for (let i = 0; i < parts.length; i++) {
         if (!node.children[parts[i]]) {
           node.children[parts[i]] = { children: {} };
         }
@@ -1802,15 +2171,15 @@ const { data, send, user, portalClient } = useNodeRed();
     return root;
   }
 
-  var ROOT_KEY = "__root__";
+  const ROOT_KEY = "__root__";
 
   function renderTree() {
     fileList.empty();
-    var isOpen = !collapsed[ROOT_KEY];
+    const isOpen = !collapsed[ROOT_KEY];
 
     // Root folder row — always visible
-    var rootRow = $('<div style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-bottom:1px solid var(--red-ui-secondary-border-color);"></div>');
-    var rootArrow = $('<i class="fa ' + (isOpen ? 'fa-caret-down' : 'fa-caret-right') + '" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:10px;text-align:center;cursor:pointer;"></i>');
+    const rootRow = $('<div style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-bottom:1px solid var(--red-ui-secondary-border-color);"></div>');
+    const rootArrow = $('<i class="fa ' + (isOpen ? 'fa-caret-down' : 'fa-caret-right') + '" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:10px;text-align:center;cursor:pointer;"></i>');
     rootArrow.on("click", function () { collapsed[ROOT_KEY] = isOpen; renderTree(); });
     rootRow.append(rootArrow);
     $('<i class="fa ' + (isOpen ? 'fa-folder-open' : 'fa-folder') + '" style="color:#fbbf24;font-size:12px;width:16px;text-align:center;"></i>').appendTo(rootRow);
@@ -1825,35 +2194,35 @@ const { data, send, user, portalClient } = useNodeRed();
       fileList.append($('<div style="padding:16px;color:var(--red-ui-secondary-text-color);text-align:center;">No files uploaded.<br><span style="font-size:11px;">Drop files here or click Upload.</span></div>'));
       return;
     }
-    var tree = buildTree(allEntries);
+    const tree = buildTree(allEntries);
     renderNode(tree, "", 1);
   }
 
   function renderNode(node, parentPath, depth) {
     // Collect and sort: dirs first, then files
-    var names = Object.keys(node.children).sort(function (a, b) {
-      var aIsDir = node.children[a].entry && node.children[a].entry.type === "dir";
-      var bIsDir = node.children[b].entry && node.children[b].entry.type === "dir";
+    const names = Object.keys(node.children).sort(function (a, b) {
+      const aIsDir = node.children[a].entry && node.children[a].entry.type === "dir";
+      const bIsDir = node.children[b].entry && node.children[b].entry.type === "dir";
       if (aIsDir && !bIsDir) return -1;
       if (!aIsDir && bIsDir) return 1;
       return a.localeCompare(b);
     });
 
     names.forEach(function (name) {
-      var child = node.children[name];
-      var e = child.entry;
+      const child = node.children[name];
+      const e = child.entry;
       if (!e) return;
-      var fullPath = e.name;
-      var indent = 8 + depth * 18;
-      var isDir = e.type === "dir";
-      var isOpen = !collapsed[fullPath];
+      const fullPath = e.name;
+      const indent = 8 + depth * 18;
+      const isDir = e.type === "dir";
+      const isOpen = !collapsed[fullPath];
 
-      var row = $('<div data-path="' + fullPath + '" style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-bottom:1px solid var(--red-ui-secondary-border-color);"></div>');
+      const row = $('<div data-path="' + fullPath + '" style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-bottom:1px solid var(--red-ui-secondary-border-color);"></div>');
       row.css("padding-left", indent + "px");
 
       if (isDir) {
         // Expand/collapse arrow
-        var arrow = $('<i class="fa ' + (isOpen ? 'fa-caret-down' : 'fa-caret-right') + '" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:10px;text-align:center;cursor:pointer;"></i>');
+        const arrow = $('<i class="fa ' + (isOpen ? 'fa-caret-down' : 'fa-caret-right') + '" style="color:var(--red-ui-secondary-text-color);font-size:11px;width:10px;text-align:center;cursor:pointer;"></i>');
         arrow.on("click", function (e) {
           e.stopPropagation();
           collapsed[fullPath] = isOpen;
@@ -1866,7 +2235,7 @@ const { data, send, user, portalClient } = useNodeRed();
           .appendTo(row);
 
         // Context menu trigger
-        var dirMenuBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;"><i class="fa fa-ellipsis-v"></i></button>');
+        const dirMenuBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;"><i class="fa fa-ellipsis-v"></i></button>');
         (function (fp, nm) {
           dirMenuBtn.on("click", function (ev) {
             ev.preventDefault();
@@ -1905,7 +2274,7 @@ const { data, send, user, portalClient } = useNodeRed();
           ev.preventDefault();
           ev.stopPropagation();
           row.css("background", "");
-          var srcPath = ev.originalEvent.dataTransfer.getData("text/x-asset-path");
+          const srcPath = ev.originalEvent.dataTransfer.getData("text/x-asset-path");
           if (srcPath) {
             moveItem(srcPath, fullPath);
           } else if (ev.originalEvent.dataTransfer.files && ev.originalEvent.dataTransfer.files.length > 0) {
@@ -1933,13 +2302,13 @@ const { data, send, user, portalClient } = useNodeRed();
         });
         row.on("dragend", function () { row.css("opacity", "1"); });
 
-        var copyBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;" title="Copy public path"><i class="fa fa-clipboard"></i></button>');
-        var fileMenuBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;"><i class="fa fa-ellipsis-v"></i></button>');
+        const copyBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;" title="Copy public path"><i class="fa fa-clipboard"></i></button>');
+        const fileMenuBtn = $('<button class="red-ui-button red-ui-button-small" style="padding:1px 5px;"><i class="fa fa-ellipsis-v"></i></button>');
         (function (fp, nm) {
           copyBtn.on("click", function (ev) {
             ev.preventDefault();
             ev.stopPropagation();
-            var url = publicBase + fp;
+            const url = publicBase + fp;
             navigator.clipboard.writeText(url).then(function () {
               RED.notify("Copied: " + url, { type: "success", timeout: 2000 });
             });
@@ -1952,7 +2321,7 @@ const { data, send, user, portalClient } = useNodeRed();
                 showRenameInput(row, fp, nm);
               }},
               { icon: "fa-download", label: "Download", action: function () {
-                var a = document.createElement("a");
+                const a = document.createElement("a");
                 a.href = adminRoot + "/portal-react/assets/download/" + fp.split("/").map(encodeURIComponent).join("/");
                 a.download = nm;
                 document.body.appendChild(a);
