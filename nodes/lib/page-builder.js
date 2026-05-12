@@ -333,11 +333,50 @@ function buildErrorPage(title, error, wsPath) {
             ws.onerror = function() { ws.close(); };
           }
           ${wsPath ? "connect();" : ""}
-          setInterval(function() {
-            fetch(location.href, { method: 'HEAD', cache: 'no-store' })
-              .then(function(r) { if (r.ok) location.reload(); })
-              .catch(function() {});
-          }, 3000);
+
+          /*
+           * Recovery polling loop.
+           *
+           * Why polling alongside the WebSocket?  The WS reload pathway only
+           * fires when the next deploy actually broadcasts a "version" frame
+           * with a non-empty hash.  If Node-RED is restarting (process down →
+           * up), the WS dies and reconnects do not help — we need an HTTP
+           * probe to notice when the runtime returns.
+           *
+           * Why backoff?  A page sitting on a long-broken build would otherwise
+           * burn one HEAD request per 3 s indefinitely — across many open
+           * tabs that adds up.  Linear-ish backoff (1.5×) caps cost while
+           * staying responsive to a freshly-recovered runtime.
+           *
+           * Cap at 10 s so the worst-case wait between successful redeploy
+           * and page recovery is bounded.
+           */
+          var __pollDelay = 3000;
+          var __pollIv = null;
+          function __schedulePoll() {
+            __pollIv = setTimeout(function poll() {
+              fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+                .then(function(r) {
+                  if (r.ok) {
+                    // Stop the loop BEFORE reload — without this, a slow
+                    // teardown could leave another setTimeout firing during
+                    // the unload, briefly racing with the new page.
+                    if (__pollIv) { clearTimeout(__pollIv); __pollIv = null; }
+                    location.reload();
+                    return;
+                  }
+                  // 4xx/5xx still means the server is up — keep delay short.
+                  __pollDelay = 3000;
+                  __schedulePoll();
+                })
+                .catch(function() {
+                  // Network error → server probably down. Grow backoff.
+                  __pollDelay = Math.min(Math.round(__pollDelay * 1.5), 10000);
+                  __schedulePoll();
+                });
+            }, __pollDelay);
+          }
+          __schedulePoll();
         })();
       <\/script>
     </body>

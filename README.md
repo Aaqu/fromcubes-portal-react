@@ -226,6 +226,11 @@ Import **Shared Components** first — it provides the UI building blocks (Page,
 | Red status "transpile error" + error page on the endpoint | JSX syntax error — fix code, redeploy (cache invalidates automatically) |
 | Red status "legacy endpoint" on deploy | Flow was saved before the `/fromcubes/` prefix became hardcoded. Open the node, set **Sub-path**, redeploy. Automatic migration is disabled to avoid silent URL changes. |
 | Red status "bad sub-path" | Sub-path is empty or violates the rules (no leading `/`, no whitespace, no `..`, segments must start alphanumerically, `public`/`_ws` reserved). |
+| Yellow status "css-fail" | Tailwind generation failed (usually an invalid class in JSX). Page still loads but unstyled. Fix the class, redeploy — the status clears on the next successful build. |
+| `npm install @aaqu/fromcubes-portal-react` ends with `EACCES` on `postinstall` | `scripts/sync-resources.js` copies Monaco into `resources/vs/` after install. The Node-RED `userDir/node_modules/...` install path must be writable by the user running Node-RED. Re-run `npm install` from a shell with the right ownership. |
+| Browser request `/portal-react/css/<hash>.css` returns 404 | The portal's deploy hasn't produced a CSS bundle yet — open the editor, redeploy. If the URL is bookmarked from before a deploy, the hash is stale; reload the portal page itself. |
+| WebSocket reconnects in an endless loop | Reverse-proxy is not forwarding `Upgrade: websocket` on `/fromcubes/<sub-path>/_ws`. Check the proxy config — nginx needs `proxy_set_header Upgrade $http_upgrade`, Traefik needs the `websocket` middleware. |
+| `libs` packages fail to install on deploy | The user-installed npm packages declared in **Libs** install via Node-RED's `dynamicModuleList` mechanism, which needs network access from `userDir` and a writable `node_modules`. Behind a corporate proxy set `npm config set proxy …` for the Node-RED user. |
 | Page loads but `data` stays `undefined` | No input wire has fired yet — broadcast something into the node |
 | `user` is `null` even with Portal Auth on | Upstream proxy is not injecting `x-portal-user-*` headers |
 | New tab shows the previous broadcast value | Expected — that's the recovery frame. Use `useNodeRed({ ignoreRecovery: true })` to opt out |
@@ -266,9 +271,6 @@ behind a reverse proxy. Highlights:
 - `x-portal-user-*` identity headers are trusted unconditionally — production
   deployments **must** terminate auth at a reverse proxy that strips inbound
   identity headers before injecting verified ones.
-
-See [SECURITY.md](SECURITY.md) for the trust model, `trust proxy` settings,
-the optional HMAC signing roadmap, and the full permission matrix.
 
 ## License
 
