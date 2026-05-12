@@ -8,6 +8,18 @@ For internals, plugin authoring, and the deploy pipeline see [README-DEV.md](./R
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L01UOFRG)
 
+## Prerequisites
+
+- **Node-RED ≥ 4.0** — declared in `package.json`'s `node-red.version` and
+  enforced by the editor's Palette Manager.
+- **Node.js ≥ 18.5** — Node-RED 4.x's effective minimum.
+- **npm** — only required when you use the `libs` config field to install
+  user packages at deploy time. The portal itself does not need `npm`
+  available at runtime.
+- A WebSocket-capable reverse proxy or direct connection — the portal
+  upgrades `/fromcubes/<sub-path>/_ws`. If you front Node-RED with nginx /
+  Traefik / Caddy, enable `Upgrade: websocket` headers on that path.
+
 ## Install
 
 ```bash
@@ -191,18 +203,21 @@ Limits: 100 MB per file, 500 MB total, 1000 files max.
 
 ## Examples
 
-Import `001-shared-components-flow.json` first — it provides shared UI components (Page, Header, Stat, Button, ValueBadge) used by the others.
+Available via **Menu → Import → Examples → @aaqu/fromcubes-portal-react**.
+Each flow includes a comment node with what to expect and the URL to open.
 
-| Flow | npm packages | Description |
+Import **Shared Components** first — it provides the UI building blocks (Page, Header, Stat, Button, ValueBadge) referenced by the others.
+
+| Example | npm packages | Description |
 |---|---|---|
-| `001-shared-components-flow.json` | — | Shared components: Page, Header, Stat, Button, ValueBadge |
-| `002-sensor-portal-flow.json` | — | Sensor gauge with live WebSocket data |
-| `003-chart-portal-flow.json` | `chart.js/auto` | Live updating Chart.js charts |
-| `004-d3-poland-flow.json` | `d3` | Interactive SVG map of Poland (simulated data) |
-| `005-threejs-portal-flow.json` | `three` | 3D scene with Three.js |
-| `006-pixi-portal-flow.json` | `pixi.js`, `@pixi/react` | Clickable bunny sprites with PixiJS |
-| `007-webgpu-tsl-flow.json` | `three` | WebGPU renderer + TSL animated shaders |
-| `008-utility-debounce-flow.json` | — | `fc-portal-utility` demo: `useDebounce` custom hook + `clamp` helper |
+| **Shared Components** | — | Reusable components: Page, Header, Stat, Button, ValueBadge |
+| **Sensor Portal** | — | Sensor gauge with live WebSocket data |
+| **Live Chart** | `chart.js/auto` | Live updating Chart.js charts |
+| **D3 Poland Map** | `d3` | Interactive SVG map of Poland (simulated data) |
+| **Three.js Scene** | `three`, `@react-three/fiber`, `@react-three/drei` | 3D scene with Three.js |
+| **PixiJS Sprites** | `pixi.js`, `@pixi/react` | Clickable bunny sprites with PixiJS |
+| **WebGPU Shader** | `three` | WebGPU renderer + TSL animated shaders |
+| **Utility Hooks** | — | `fc-portal-utility` demo: `useDebounce` custom hook + `clamp` helper |
 
 ## Troubleshooting
 
@@ -215,6 +230,45 @@ Import `001-shared-components-flow.json` first — it provides shared UI compone
 | `user` is `null` even with Portal Auth on | Upstream proxy is not injecting `x-portal-user-*` headers |
 | New tab shows the previous broadcast value | Expected — that's the recovery frame. Use `useNodeRed({ ignoreRecovery: true })` to opt out |
 | Page reloads on every deploy | Expected for code changes; clients soft-reconnect with exponential backoff |
+
+## Architecture: source AND sink
+
+The Node-RED guidelines suggest a node should "sit at the beginning, middle
+or end of a flow — not all at once". `portal-react` intentionally violates
+this: every node is both a **sink** (`msg → render`) and a **source** (UI
+event → outbound `msg`). Trade-offs:
+
+- **Pro**: one wire per portal is conceptually simpler — the same node owns
+  the page lifecycle, its WebSocket, and the routing rules.
+- **Con**: flow-error tracking only follows the `input → output` path.
+  Errors originating in the browser (e.g. a runtime exception inside a UI
+  handler) cross the WebSocket as a source-event and are **not** routed to
+  a Catch node on the same tab — they surface as a red node status and a
+  log line. This matches the Node-RED guidance for source nodes: "produces
+  messages in response to external events".
+
+If you need explicit Catch-node visibility for UI-originated errors, wire
+the portal's output through a Switch / Catch chain — a UI event landing on
+`msg.payload` is then a regular wire-level message that Catch can observe.
+
+## Security
+
+This module is meant to run behind a trusted Node-RED instance, ideally
+behind a reverse proxy. Highlights:
+
+- Admin write endpoints require the `Node-RED-API-Version` header (CSRF
+  protection) and a `portal-react.write` permission when `adminAuth` is
+  configured.
+- Token-bucket rate-limit (default 60 burst / 1 req/s steady) on every
+  write endpoint, tunable via `RED.settings.portalReact.rateLimit`.
+- 1 MB JSON body cap, 100 MB asset-upload cap, 500 MB / 1000 files total
+  assets quota, 1 MB WebSocket frame cap.
+- `x-portal-user-*` identity headers are trusted unconditionally — production
+  deployments **must** terminate auth at a reverse proxy that strips inbound
+  identity headers before injecting verified ones.
+
+See [SECURITY.md](SECURITY.md) for the trust model, `trust proxy` settings,
+the optional HMAC signing roadmap, and the full permission matrix.
 
 ## License
 

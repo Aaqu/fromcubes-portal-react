@@ -1,0 +1,122 @@
+[
+    {
+        "id": "fc-three-flow",
+        "type": "tab",
+        "label": "Three.js Demo",
+        "disabled": false
+    },
+    {
+        "id": "7ad6c130eab72734",
+        "type": "comment",
+        "z": "fc-three-flow",
+        "name": "Three.js Scene Demo",
+        "info": "Rotating 3D cube rendered with Three.js + @react-three/fiber.\n\n## What it demonstrates\nMultiple library deps declared together: `three`, `@react-three/fiber`, `@react-three/drei`.\nShows that the React `alias` in esbuild keeps a single React instance across all peer deps\n(no \"Invalid hook call\" errors).\n\n## How to run\n1. Import this flow, deploy.\n2. Open `http://<host>:1880/fromcubes/threejs`.\n\n## Expected result\nA textured cube rotates in a WebGL canvas. Orbit controls work with mouse drag.",
+        "x": 160,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "fc-three-comp-box",
+        "type": "fc-portal-component",
+        "z": "fc-three-flow",
+        "compName": "Box",
+        "compCode": "import { useFrame } from '@react-three/fiber';\n\nfunction Box({ position, color = 'orange', onToggle }) {\n  const ref = useRef();\n  const [hovered, hover] = useState(false);\n  const [clicked, click] = useState(false);\n\n  useFrame((state, delta) => (ref.current.rotation.x += delta));\n\n  return (\n    <mesh\n      position={position}\n      ref={ref}\n      scale={clicked ? 1.5 : 1}\n      onClick={() => {\n        click(!clicked);\n        if (onToggle) onToggle(!clicked);\n      }}\n      onPointerOver={(e) => (e.stopPropagation(), hover(true))}\n      onPointerOut={() => hover(false)}\n    >\n      <boxGeometry args={[1, 1, 1]} />\n      <meshStandardMaterial color={hovered ? 'hotpink' : color} />\n    </mesh>\n  );\n}",
+        "compInputs": "position,color,onToggle",
+        "compOutputs": "",
+        "x": 160,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "fc-three-comp-statusbar",
+        "type": "fc-portal-component",
+        "z": "fc-three-flow",
+        "compName": "StatusBar",
+        "compCode": "function StatusBar({ leftColor, rightColor, clickCount }) {\n  return (\n    <div className=\"px-6 py-4 bg-zinc-900/50 border-t border-zinc-800/50 flex items-center gap-6 flex-wrap\">\n      <Stat label=\"Left box\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{ backgroundColor: leftColor }} />\n      </Stat>\n      <Stat label=\"Right box\">\n        <span className=\"w-4 h-4 rounded-full border border-zinc-700\" style={{ backgroundColor: rightColor }} />\n      </Stat>\n      <Stat label=\"Clicks\">\n        <span className=\"text-sm font-mono text-cyan-400\">{clickCount}</span>\n      </Stat>\n    </div>\n  );\n}",
+        "compInputs": "leftColor,rightColor,clickCount",
+        "compOutputs": "",
+        "x": 360,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "fc-three-inject",
+        "type": "inject",
+        "z": "fc-three-flow",
+        "name": "Tick",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "3",
+        "payload": "{}",
+        "payloadType": "json",
+        "x": 160,
+        "y": 160,
+        "wires": [
+            [
+                "fc-three-func"
+            ]
+        ]
+    },
+    {
+        "id": "fc-three-func",
+        "type": "function",
+        "z": "fc-three-flow",
+        "name": "Random colors",
+        "func": "const rnd = () => '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');\nmsg.payload = {\n  leftColor: rnd(),\n  rightColor: rnd()\n};\nreturn msg;",
+        "outputs": 1,
+        "x": 360,
+        "y": 160,
+        "wires": [
+            [
+                "fc-three-portal"
+            ]
+        ]
+    },
+    {
+        "id": "fc-three-portal",
+        "type": "portal-react",
+        "z": "fc-three-flow",
+        "name": "3D Portal",
+        "subPath": "threejs",
+        "pageTitle": "fromcubes 3D",
+        "customHead": "",
+        "portalAuth": false,
+        "showWsStatus": false,
+        "libs": [
+            {
+                "module": "three",
+                "var": "THREE"
+            },
+            {
+                "module": "@react-three/fiber",
+                "var": "R3F"
+            },
+            {
+                "module": "@react-three/drei",
+                "var": "Drei"
+            }
+        ],
+        "componentCode": "import { Canvas } from '@react-three/fiber';\nimport { OrbitControls } from '@react-three/drei';\n\nfunction App() {\n  const { data, send } = useNodeRed();\n  const colors = data || { leftColor: 'orange', rightColor: 'cyan' };\n  const [clickCount, setClickCount] = useState(0);\n\n  const handleToggle = useCallback((clicked) => {\n    setClickCount(prev => prev + 1);\n    send({ action: clicked ? 'clicked' : 'unclicked', clicks: clickCount + 1 }, '3d/interact');\n  }, [send, clickCount]);\n\n  return (\n    <div className=\"h-screen bg-zinc-950 text-zinc-100 flex flex-col\">\n      <Header title=\"fromcubes 3D\" subtitle=\"React Three Fiber + live Node-RED data\" />\n      <div className=\"flex-1 overflow-hidden\">\n        <Canvas style={{ width: '100%', height: '100%' }}>\n          <ambientLight intensity={Math.PI / 2} />\n          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} decay={0} intensity={Math.PI} />\n          <pointLight position={[-10, -10, -10]} decay={0} intensity={Math.PI} />\n          <Box position={[-1.2, 0, 0]} color={colors.leftColor} onToggle={handleToggle} />\n          <Box position={[1.2, 0, 0]} color={colors.rightColor} onToggle={handleToggle} />\n          <OrbitControls />\n        </Canvas>\n      </div>\n      <StatusBar leftColor={colors.leftColor} rightColor={colors.rightColor} clickCount={clickCount} />\n    </div>\n  );\n}",
+        "x": 560,
+        "y": 160,
+        "wires": [
+            [
+                "fc-three-debug"
+            ]
+        ]
+    },
+    {
+        "id": "fc-three-debug",
+        "type": "debug",
+        "z": "fc-three-flow",
+        "name": "3D output",
+        "active": true,
+        "tosidebar": true,
+        "x": 750,
+        "y": 160,
+        "wires": []
+    }
+]
