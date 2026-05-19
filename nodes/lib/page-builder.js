@@ -1,7 +1,34 @@
+/** @module nodes/lib/page-builder */
+
 /**
- * HTML page builders for portal-react.
+ * HTML page builders for portal-react. Two entry points:
+ *
+ *   - {@link buildPage}      — full portal HTML with inlined JS bundle, WS bridge,
+ *                              error overlay, optional connection badge.
+ *   - {@link buildErrorPage} — minimal HTML served when a build fails AND no
+ *                              previous good build exists for degraded-mode
+ *                              fallback. Polls + WS-reconnects for recovery.
+ *
+ * Both share the same `#__error_overlay` / `#__error_banner` CSS so the look
+ * is consistent across initial-load failure and live build/runtime errors.
  */
 
+/**
+ * @typedef {Object} ErrorOverlayParams
+ * @property {string}  title          Overlay heading (e.g. "Build Error").
+ * @property {string}  [hint]         Optional one-line user hint under the title.
+ * @property {string}  message        Multi-line error message rendered inside `<pre>`.
+ * @property {string}  [statusLine]   Optional small status line beneath the message.
+ * @property {boolean} [statusOk]     When true, statusLine is rendered green; otherwise muted.
+ */
+
+/**
+ * HTML-escape a value for safe interpolation into element text or attribute
+ * context. Stringifies non-strings.
+ *
+ * @param {*} s
+ * @returns {string}
+ */
 function esc(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -10,6 +37,14 @@ function esc(s) {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * Neutralize `</script>` sequences in user-supplied content that will be
+ * inlined inside a `<script>` block. Avoids accidental script-tag escape
+ * from a string that contains the closing tag literally.
+ *
+ * @param {*} s
+ * @returns {string}
+ */
 function escScript(s) {
   return String(s).replace(/<\/(script)/gi, "<\\/$1");
 }
@@ -56,8 +91,14 @@ const ERROR_OVERLAY_CSS = `
   }
 `;
 
-// Shared error overlay markup (HTML inside #__error_overlay).
-// Used by buildPage (WS error frame, runtime try/catch) and buildErrorPage.
+/**
+ * Shared error overlay markup (HTML rendered inside `#__error_overlay`).
+ * Used by `buildPage` (WS error frame, runtime try/catch) and
+ * `buildErrorPage` so both surface look identical.
+ *
+ * @param {ErrorOverlayParams} params
+ * @returns {string}  HTML fragment (no surrounding `<div>` — caller wraps).
+ */
 function errorOverlayInnerHtml({ title, hint, message, statusLine, statusOk }) {
   return (
     `<h1>${esc(title)}</h1>` +
@@ -71,6 +112,25 @@ function errorOverlayInnerHtml({ title, hint, message, statusLine, statusOk }) {
 
 const DEFAULT_HINT = "Fix the component code in Node-RED and deploy again.";
 
+/**
+ * Build the full portal HTML page. Inlines the transpiled JS bundle, wires up
+ * the `window.__NR` WebSocket bridge (used by `useNodeRed()`), installs the
+ * shared error overlay/banner machinery, and optionally renders the
+ * connection-status badge in the bottom-right corner.
+ *
+ * The browser receives no compiler — the inlined `transpiledJs` is the
+ * already-bundled IIFE produced by esbuild at deploy time.
+ *
+ * @param {string}  title          Document title (`<title>` tag).
+ * @param {string}  transpiledJs   Pre-compiled IIFE bundle from esbuild.
+ * @param {string}  wsPath         WebSocket URL path (e.g. `/fromcubes/<sub>/_ws`).
+ * @param {string}  customHead     Raw HTML inserted into `<head>` (trusted-author).
+ * @param {string}  cssHash        Tailwind CSS bundle hash, or "" to skip the link tag.
+ * @param {?Object} user           PortalUser object or null when Portal Auth is off.
+ * @param {boolean} showWsStatus   Render the `#__cs` connection badge.
+ * @param {string}  adminRoot      `RED.settings.httpAdminRoot` (no trailing slash).
+ * @returns {string}               Complete HTML5 document.
+ */
 function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showWsStatus, adminRoot) {
   return `<!DOCTYPE html>
     <html lang="en">
@@ -284,6 +344,20 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
     </html>`;
 }
 
+/**
+ * Build a minimal error page served when a portal build fails AND no
+ * previous good build exists for degraded-mode fallback. Includes:
+ *
+ *   - The shared error overlay markup populated with the error message.
+ *   - A WS reconnect loop that reloads the page on the next `version` frame.
+ *   - An HTTP HEAD polling loop with linear backoff (1.5×, capped at 10 s)
+ *     so the page also recovers when Node-RED itself was restarted (WS dies).
+ *
+ * @param {string} title    Browser title (gets ` — Error` suffix).
+ * @param {string} error    Multi-line error message rendered inside the overlay.
+ * @param {string} wsPath   WebSocket URL path; pass empty string to skip WS wiring.
+ * @returns {string}        Complete HTML5 document.
+ */
 function buildErrorPage(title, error, wsPath) {
   return `<!DOCTYPE html>
     <html lang="en">
@@ -333,11 +407,50 @@ function buildErrorPage(title, error, wsPath) {
             ws.onerror = function() { ws.close(); };
           }
           ${wsPath ? "connect();" : ""}
-          setInterval(function() {
-            fetch(location.href, { method: 'HEAD', cache: 'no-store' })
-              .then(function(r) { if (r.ok) location.reload(); })
-              .catch(function() {});
-          }, 3000);
+
+          /*
+           * Recovery polling loop.
+           *
+           * Why polling alongside the WebSocket?  The WS reload pathway only
+           * fires when the next deploy actually broadcasts a "version" frame
+           * with a non-empty hash.  If Node-RED is restarting (process down →
+           * up), the WS dies and reconnects do not help — we need an HTTP
+           * probe to notice when the runtime returns.
+           *
+           * Why backoff?  A page sitting on a long-broken build would otherwise
+           * burn one HEAD request per 3 s indefinitely — across many open
+           * tabs that adds up.  Linear-ish backoff (1.5×) caps cost while
+           * staying responsive to a freshly-recovered runtime.
+           *
+           * Cap at 10 s so the worst-case wait between successful redeploy
+           * and page recovery is bounded.
+           */
+          var __pollDelay = 3000;
+          var __pollIv = null;
+          function __schedulePoll() {
+            __pollIv = setTimeout(function poll() {
+              fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+                .then(function(r) {
+                  if (r.ok) {
+                    // Stop the loop BEFORE reload — without this, a slow
+                    // teardown could leave another setTimeout firing during
+                    // the unload, briefly racing with the new page.
+                    if (__pollIv) { clearTimeout(__pollIv); __pollIv = null; }
+                    location.reload();
+                    return;
+                  }
+                  // 4xx/5xx still means the server is up — keep delay short.
+                  __pollDelay = 3000;
+                  __schedulePoll();
+                })
+                .catch(function() {
+                  // Network error → server probably down. Grow backoff.
+                  __pollDelay = Math.min(Math.round(__pollDelay * 1.5), 10000);
+                  __schedulePoll();
+                });
+            }, __pollDelay);
+          }
+          __schedulePoll();
         })();
       <\/script>
     </body>

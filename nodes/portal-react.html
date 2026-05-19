@@ -22,8 +22,16 @@
     window.__fcTwClasses = null;
     let jsxSetupDone = false;
 
-    // One-time Monaco setup: compiler opts, diagnostics, extra libs, completion provider.
-    // Idempotent — safe to call multiple times, only runs setup once.
+    /**
+     * One-time Monaco setup: compiler opts, diagnostics, extra libs,
+     * completion providers (Tailwind class, JSX tag, utility symbol).
+     * Idempotent — safe to call multiple times, only the first call wires
+     * up listeners; subsequent calls just re-apply the compiler/diagnostics
+     * blocks because Node-RED resets them whenever the editor reloads.
+     *
+     * @returns {void}
+     * @private
+     */
     function ensureJsxSetup() {
       if (jsxSetupDone) {
         console.log(
@@ -439,7 +447,15 @@
         console.log(PREFIX, "self-close collapse attached to editor");
       };
 
-      // Fetch component names for tag completion
+      /**
+       * Fetch the current component registry from `/portal-react/registry`
+       * and stash the names on `window.__fcComponentNames` so the JSX-tag
+       * completion provider can offer `<Button` etc. Re-fetched on every
+       * editor open so newly-added components show up without an editor
+       * restart.
+       * @returns {void}
+       * @private
+       */
       function refreshComponentNames() {
         $.getJSON("portal-react/registry", function (reg) {
           window.__fcComponentNames = Object.keys(reg);
@@ -547,6 +563,17 @@
       console.log(PREFIX, "one-time setup complete");
     }
 
+    /**
+     * Push compilerOptions + diagnosticsOptions into Monaco's TS defaults.
+     * Called by `ensureJsxSetup` once and re-applied on every editor open
+     * because Node-RED's outer Monaco initialiser can reset these between
+     * editor sessions. We disable Monaco's TS-side squiggles entirely —
+     * the authoritative syntax check is the server-side esbuild pass at
+     * deploy time, and Monaco's TS parser produces noisy false positives
+     * (1109/1005/1128) on raw JSX.
+     * @returns {void}
+     * @private
+     */
     function applyCompilerAndDiag() {
       const jsDef = monaco.typescript.javascriptDefaults;
       const compilerOpts = {
@@ -583,11 +610,28 @@
       );
     }
 
-    // Exported for oneditprepare to call before model creation
+    /**
+     * Re-apply JSX defaults before Monaco model creation. Exported for
+     * `oneditprepare` to call. Idempotent — wraps `ensureJsxSetup`.
+     * @returns {void}
+     */
     window.__fcApplyJsxDefaults = function () {
       ensureJsxSetup();
     };
 
+    /**
+     * Lazy-load Monaco from the admin endpoint `/portal-react/vs/` the
+     * first time an editor opens. If Monaco is already on `window`
+     * (Node-RED bundled its own copy, or another node loaded it first),
+     * skip the loader script and run our setup inline.
+     *
+     * The callback signature is `cb(failed)` — `failed === true` when the
+     * loader script threw at load time; editors should fall back to a
+     * plain textarea in that case.
+     *
+     * @param {(failed?: boolean) => void} cb
+     * @returns {void}
+     */
     window.__fcLoadMonaco = function (cb) {
       console.log(PREFIX, "loadMonaco called, monaco exists:", !!window.monaco);
       if (window.monaco) {
@@ -667,22 +711,61 @@
       "}",
     ].join("\n");
 
+    // FC_NAME_RE / FC_NAME_MAX / FC_NAME_BLACKLIST mirror lib/helpers.js
+    // isSafeName so the editor flags invalid names before deploy.
+    const FC_NAME_RE = /^[A-Za-z_$][\w$]*$/;
+    const FC_NAME_MAX = 64;
+    const FC_NAME_BLACKLIST = [
+      "__proto__", "constructor", "prototype", "hasOwnProperty",
+      "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf",
+      "toLocaleString",
+    ];
+    function fcValidateName(v) {
+      return (
+        typeof v === "string" &&
+        v.length > 0 &&
+        v.length <= FC_NAME_MAX &&
+        FC_NAME_RE.test(v) &&
+        FC_NAME_BLACKLIST.indexOf(v) === -1
+      );
+    }
+
     RED.nodes.registerType("fc-portal-component", {
       category: "fromcubes",
       color: "#a8d8ea",
       defaults: {
         name: { value: "" },
-        compName: { value: "StatusCard", required: true },
+        compName: {
+          value: "StatusCard",
+          required: true,
+          validate: fcValidateName,
+        },
         compCode: { value: COMP_STARTER },
       },
       inputs: 0,
       outputs: 0,
       icon: "font-awesome/fa-cube",
-      paletteLabel: "fromcubes component",
+      paletteLabel: "React Component",
+      inputLabels: [],
+      outputLabels: [],
+      /**
+       * Canvas label resolver — falls back through `name → compName →
+       * "component"` so a freshly-dropped node shows something readable
+       * before the user opens the edit dialog.
+       * @returns {string}
+       */
       label: function () {
         return this.name || this.compName || "component";
       },
 
+      /**
+       * Node-RED editor lifecycle: called every time the user opens the
+       * edit dialog for this node. Loads Monaco lazily, creates a JSX
+       * model with a stable URI (`file:///fc-comp-<nodeId>.jsx`) and
+       * attaches it to the `#fcc-monaco` container. Falls back to a
+       * `<textarea>` if Monaco fails to load.
+       * @returns {void}
+       */
       oneditprepare: function () {
         const node = this;
         const code = node.compCode || COMP_STARTER;
@@ -770,6 +853,12 @@
         });
       },
 
+      /**
+       * Editor → flow: copy Monaco editor contents into the hidden
+       * `#node-input-compCode` input and the node's `compCode` property,
+       * then dispose Monaco's model + editor to free GPU/CPU resources.
+       * @returns {void}
+       */
       oneditsave: function () {
         console.log("[FC-Monaco] COMP oneditsave");
         const code = compEditorInstance
@@ -785,6 +874,12 @@
         }
       },
 
+      /**
+       * User cancelled the dialog — discard Monaco state without writing
+       * back to the node. Same dispose pattern as oneditsave to avoid
+       * leaking model graphs.
+       * @returns {void}
+       */
       oneditcancel: function () {
         console.log("[FC-Monaco] COMP oneditcancel");
         if (compEditorInstance) {
@@ -795,6 +890,13 @@
         }
       },
 
+      /**
+       * Resize handler — Monaco doesn't react to container size changes
+       * unless we call `editor.layout()` explicitly. Subtracts ~180 px of
+       * chrome (label, buttons, padding) from the dialog height.
+       * @param {{height: number, width: number}} size
+       * @returns {void}
+       */
       oneditresize: function (size) {
         let h = size.height - 180;
         if (h < 150) h = 150;
@@ -872,6 +974,35 @@
   (function () {
     let utilEditorInstance = null;
 
+    // Local copy of the identifier validator — each editor <script> block is
+    // wrapped in its own IIFE, so the helper defined in the fc-portal-component
+    // block above is out of scope here. Mirrors lib/helpers.js isSafeName.
+    const FC_NAME_RE = /^[A-Za-z_$][\w$]*$/;
+    const FC_NAME_MAX = 64;
+    const FC_NAME_BLACKLIST = [
+      "__proto__", "constructor", "prototype", "hasOwnProperty",
+      "isPrototypeOf", "propertyIsEnumerable", "toString", "valueOf",
+      "toLocaleString",
+    ];
+    /**
+     * Mirror of `lib/helpers.js#isSafeName` — used as `defaults.utilName.validate`
+     * so the editor flags invalid identifiers in red before the user can
+     * deploy a node that the server would later reject. Rules: non-empty
+     * string, ≤ 64 chars, JS identifier syntax, not on the prototype-key
+     * blacklist.
+     * @param {unknown} v
+     * @returns {boolean}
+     */
+    function fcValidateName(v) {
+      return (
+        typeof v === "string" &&
+        v.length > 0 &&
+        v.length <= FC_NAME_MAX &&
+        FC_NAME_RE.test(v) &&
+        FC_NAME_BLACKLIST.indexOf(v) === -1
+      );
+    }
+
     const UTIL_STARTER = [
       "// Helpers / custom hooks / constants — top-level, no React component.",
       "// Each symbol declared here is available globally in any portal that",
@@ -899,17 +1030,33 @@
       color: "#fbbf24",
       defaults: {
         name: { value: "" },
-        utilName: { value: "myHelpers", required: true },
+        utilName: {
+          value: "myHelpers",
+          required: true,
+          validate: fcValidateName,
+        },
         utilCode: { value: UTIL_STARTER },
       },
       inputs: 0,
       outputs: 0,
       icon: "font-awesome/fa-wrench",
-      paletteLabel: "fromcubes utility",
+      paletteLabel: "React Utility",
+      inputLabels: [],
+      outputLabels: [],
+      /**
+       * Canvas label — `name → utilName → "utility"`.
+       * @returns {string}
+       */
       label: function () {
         return this.name || this.utilName || "utility";
       },
 
+      /**
+       * Editor lifecycle for `fc-portal-utility`: lazy-load Monaco,
+       * create a JS model with URI `file:///fc-util-<nodeId>.js` (note
+       * `.js` not `.jsx` — utility code is plain JS).
+       * @returns {void}
+       */
       oneditprepare: function () {
         const node = this;
         const code = node.utilCode || UTIL_STARTER;
@@ -941,6 +1088,11 @@
         });
       },
 
+      /**
+       * Editor → flow: write Monaco contents back to `utilCode`, dispose
+       * model+editor.
+       * @returns {void}
+       */
       oneditsave: function () {
         const code = utilEditorInstance
           ? utilEditorInstance.getValue()
@@ -954,6 +1106,10 @@
         }
       },
 
+      /**
+       * Discard Monaco state without writing back.
+       * @returns {void}
+       */
       oneditcancel: function () {
         if (utilEditorInstance) {
           utilEditorInstance.getModel().dispose();
@@ -962,6 +1118,12 @@
         }
       },
 
+      /**
+       * Layout Monaco on dialog resize. -200 px chrome for the utility
+       * dialog (taller because of the symbol-list panel).
+       * @param {{height: number, width: number}} size
+       * @returns {void}
+       */
       oneditresize: function (size) {
         let h = size.height - 200;
         if (h < 150) h = 150;
@@ -1232,11 +1394,33 @@ function useDebounce(value, ms = 300) {
       inputs: 1,
       outputs: 1,
       icon: "font-awesome/fa-desktop",
-      paletteLabel: "fromcubes portal",
+      paletteLabel: "React Portal",
+      // Source AND sink — we keep the default left-aligned input even though
+      // Node-RED appearance docs suggest align: 'right' for nodes that sit at
+      // the end of a flow. This portal is hybrid: the input wire pushes msgs
+      // into the browser, while the output wire forwards UI events out. Left
+      // alignment matches the dominant "msg → render" direction.
+      inputLabels: ["broadcast / unicast msg → page"],
+      outputLabels: ["UI event from page"],
+      /**
+       * Canvas label — shows `name` or the deployed URL (`/fromcubes/<subPath>`).
+       * @returns {string}
+       */
       label: function () {
         return this.name || ("/fromcubes/" + (this.subPath || "?"));
       },
 
+      /**
+       * Editor lifecycle for the portal node. Heaviest of the three —
+       * creates two Monaco editors (JSX + Head HTML), wires up:
+       *   - URL hint that previews `/fromcubes/<subPath>`
+       *   - Legacy `endpoint` field migration warning
+       *   - `RED.tabs` for JSX / Properties / Head HTML panels
+       *   - Component picker dialog (`#fc-btn-components`)
+       *   - Utility picker dialog (`#fc-btn-utilities`)
+       *   - Portal Assets sidebar tab via `RED.sidebar.addTab` (once)
+       * @returns {void}
+       */
       oneditprepare: function () {
         const node = this;
         const code = node.componentCode || STARTER;
@@ -1672,6 +1856,13 @@ function useDebounce(value, ms = 300) {
         });
       },
 
+      /**
+       * Editor → flow. Normalises `subPath` (trim), clears the legacy
+       * `endpoint` field, collects `libs` from the editableList widget,
+       * writes both Monaco editors back to hidden inputs + node props,
+       * then disposes both editors.
+       * @returns {void}
+       */
       oneditsave: function () {
         console.log("[FC-Monaco] PORTAL oneditsave");
 
@@ -1718,6 +1909,12 @@ function useDebounce(value, ms = 300) {
         }
       },
 
+      /**
+       * Discard both Monaco editors without writing back to the node.
+       * Identical dispose pattern to oneditsave so we never leak Monaco
+       * graphs even if the user spams Edit / Cancel rapidly.
+       * @returns {void}
+       */
       oneditcancel: function () {
         console.log("[FC-Monaco] PORTAL oneditcancel");
         if (editorInstance) {
@@ -1734,6 +1931,13 @@ function useDebounce(value, ms = 300) {
         }
       },
 
+      /**
+       * Dialog resize → compute available editor height by subtracting
+       * the heights of non-tab form rows + tab strip + 30 px padding,
+       * then re-layout both Monaco editors. Falls back to 200 px minimum.
+       * @param {{height: number, width: number}} size
+       * @returns {void}
+       */
       oneditresize: function (size) {
         const tabsH = $("#fc-tabs").outerHeight(true) || 0;
         const rows = $(
@@ -1879,6 +2083,11 @@ const { data, send, user, portalClient } = useNodeRed();
   const nodeRoot = (RED.settings.httpNodeRoot || "/").replace(/\/$/, "");
   const publicBase = nodeRoot + "/fromcubes/public/";
 
+  /**
+   * Human-readable byte formatter for the assets sidebar.
+   * @param {number} bytes
+   * @returns {string}  e.g. `"42 B"`, `"3.2 KB"`, `"1.4 MB"`.
+   */
   function formatSize(bytes) {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -1902,6 +2111,11 @@ const { data, send, user, portalClient } = useNodeRed();
     .appendTo(toolbar);
 
   // ── Helpers ──
+  /**
+   * Linear scan over the most-recently-fetched asset list.
+   * @param {string} p   Relative path inside the assets root.
+   * @returns {boolean}
+   */
   function pathExists(p) {
     for (let i = 0; i < allEntries.length; i++) {
       if (allEntries[i].name === p) return true;
@@ -1909,6 +2123,16 @@ const { data, send, user, portalClient } = useNodeRed();
     return false;
   }
 
+  /**
+   * POST one or more files to the upload endpoint. Prompts before
+   * overwriting existing paths. Each request is sent independently so
+   * an upstream failure of one file does not block the rest; the sidebar
+   * is refreshed once all responses have arrived.
+   * @param {FileList|Array<File>} files
+   * @param {string} targetDir   Relative directory inside the assets root
+   *                             (empty string for root).
+   * @returns {void}
+   */
   function uploadFiles(files, targetDir) {
     if (!files || files.length === 0) return;
     let toUpload = [];
@@ -1976,6 +2200,15 @@ const { data, send, user, portalClient } = useNodeRed();
     }
   });
 
+  /**
+   * Move or rename an asset. Computes the new path from `fromPath`'s basename
+   * + `toDir`. No-ops when source and destination are equal. Prompts before
+   * overwriting an existing destination. Posts to the `move` admin endpoint
+   * (auth- and CSRF-gated server-side); the sidebar refreshes on success.
+   * @param {string} fromPath  Current relative path of the item.
+   * @param {string} toDir     Destination directory (empty string for root).
+   * @returns {void}
+   */
   function moveItem(fromPath, toDir) {
     const filename = fromPath.split("/").pop();
     const newPath = toDir ? toDir + "/" + filename : filename;
@@ -2347,6 +2580,12 @@ const { data, send, user, portalClient } = useNodeRed();
     });
   }
 
+  /**
+   * Re-fetch the assets listing from the admin API and re-render the tree.
+   * Called after every mutation (upload/move/delete/mkdir) and on the
+   * Node-RED `sidebar:resize` event.
+   * @returns {void}
+   */
   function refreshList() {
     $.getJSON("portal-react/assets", function (entries) {
       allEntries = entries || [];

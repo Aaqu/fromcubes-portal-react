@@ -1,3 +1,5 @@
+/** @module nodes/lib/router */
+
 /**
  * Pure routing function for portal-react WS outbound messages.
  *
@@ -10,11 +12,33 @@
  *   3. msg._client.username      → user-cast fallback (O(N) scan)
  *   4. otherwise                 → broadcast
  *
- * Returns a shallow summary { mode, delivered } for observability/tests.
+ * Returns a shallow summary `{ mode, delivered }` for observability/tests.
  * The caller is responsible for any side-effects keyed off the mode
  * (e.g. caching the last broadcast payload for new-client recovery).
  */
 
+/**
+ * @typedef {Object} RouteContext
+ * @property {Map<string, import("ws").WebSocket>} clients   portalClient → ws
+ * @property {Map<string, Set<import("ws").WebSocket>>} userIndex userId → ws set
+ * @property {(ws: any, frame: string, msg: Object) => boolean} sendTo
+ */
+
+/**
+ * @typedef {Object} RouteResult
+ * @property {"unicast"|"user-cast"|"broadcast"} mode
+ * @property {number} delivered
+ */
+
+/**
+ * Pure router — chooses delivery mode based on `msg._client` and dispatches
+ * via `ctx.sendTo` (which is responsible for hook checks and send-failure
+ * handling). Has no side-effects other than calling `sendTo`.
+ *
+ * @param {Object} msg
+ * @param {RouteContext} ctx
+ * @returns {RouteResult}
+ */
 function route(msg, ctx) {
   const { clients, userIndex, sendTo } = ctx;
   const target = msg && msg._client;

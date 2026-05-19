@@ -1,5 +1,34 @@
+/** @module nodes/lib/helpers */
+
 /**
- * Shared helper functions for portal-react.
+ * Shared helper functions for portal-react. Pure helpers (hash, validators,
+ * esbuild wrappers) are exported at module level; runtime helpers that need
+ * `RED` (cache, tailwind, preInstall hook) are produced by the default export
+ * factory.
+ */
+
+/**
+ * @typedef {Object} TranspileResult
+ * @property {string|null} js          Compiled IIFE bundle, or null on error.
+ * @property {string|null} [error]     Multi-line error description from esbuild.
+ * @property {Object}      [metafile]  Optional esbuild metafile (size analysis).
+ */
+
+/**
+ * @typedef {Object} SubPathResult
+ * @property {boolean} ok
+ * @property {string}  [value]
+ * @property {string}  [error]
+ */
+
+/**
+ * @typedef {Object} PortalUser
+ * @property {string}              [userId]
+ * @property {string}              [userName]
+ * @property {string}              [username]
+ * @property {string}              [email]
+ * @property {string}              [role]
+ * @property {string|Array<string>}[groups]
  */
 
 const crypto = require("crypto");
@@ -7,6 +36,17 @@ const fs = require("fs");
 const path = require("path");
 const esbuild = require("esbuild");
 
+// Cap on JSON-encoded `x-portal-user-groups` header — protects JSON.parse from
+// being fed an unbounded payload by a misbehaving auth proxy / forged header.
+// Same order of magnitude as Express default header size; trimming here so a
+// 1MB string can't reach JSON.parse.
+const MAX_GROUPS_HEADER_BYTES = 8 * 1024;
+
+/**
+ * Short content hash used for cache keys (16 hex chars of sha256).
+ * @param {string} str
+ * @returns {string}
+ */
 function hash(str) {
   return crypto.createHash("sha256").update(str).digest("hex").slice(0, 16);
 }
@@ -15,6 +55,13 @@ const twCompile = require("tailwindcss").compile;
 const CANDIDATE_RE = /[a-zA-Z0-9_\-:.\/\[\]#%]+/g;
 
 let twCompiled = null;
+/**
+ * Lazily compile the Tailwind base stylesheet. Result is memoized at module
+ * scope — first call resolves async stylesheet imports, every subsequent
+ * call returns the cached compiler.
+ *
+ * @returns {Promise<Object>}  Tailwind `compile()` result with a `.build()` method.
+ */
 async function getTwCompiled() {
   if (twCompiled) return twCompiled;
   twCompiled = await twCompile(`@import 'tailwindcss';`, {
@@ -34,6 +81,13 @@ async function getTwCompiled() {
   return twCompiled;
 }
 
+/**
+ * Generate the per-page Tailwind CSS bundle by scanning `source` for utility
+ * class candidates and feeding them to the compiled Tailwind core.
+ *
+ * @param {string} source                       Source text to scan for class candidates.
+ * @returns {Promise<{css: string, cssHash: string}>}
+ */
 async function generateCSS(source) {
   const cssHash = hash(source);
   const compiled = await getTwCompiled();
@@ -42,17 +96,61 @@ async function generateCSS(source) {
   return { css, cssHash };
 }
 
-const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+// Component / utility names become JavaScript identifiers in the generated
+// bundle (`const Name = (() => ...)();` for components; raw top-level decls
+// for utilities). Enforce strict identifier syntax up-front so the diagnostic
+// surfaces on the offending node — not as a confusing esbuild parse error on
+// some unrelated portal that happens to import it.
+const NAME_RE = /^[A-Za-z_$][\w$]*$/;
+const NAME_MAX_LEN = 64;
+const NAME_BLACKLIST = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toString",
+  "valueOf",
+  "toLocaleString",
+]);
 
+/**
+ * True when `name` is a syntactically valid JavaScript identifier of bounded
+ * length that does not collide with Object prototype keys.
+ *
+ * Rules:
+ * - non-empty string
+ * - length ≤ 64
+ * - matches /^[A-Za-z_$][\w$]*$/
+ * - not in NAME_BLACKLIST (prototype pollution guard)
+ *
+ * @param {unknown} name
+ * @returns {boolean}
+ */
 function isSafeName(name) {
   return (
-    typeof name === "string" && name.length > 0 && !FORBIDDEN_KEYS.has(name)
+    typeof name === "string" &&
+    name.length > 0 &&
+    name.length <= NAME_MAX_LEN &&
+    NAME_RE.test(name) &&
+    !NAME_BLACKLIST.has(name)
   );
 }
 
 const SUB_PATH_SEGMENT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const SUB_PATH_RESERVED = new Set(["public", "_ws"]);
 
+/**
+ * Validate a portal sub-path (the part served under `/fromcubes/<sub-path>`).
+ *
+ * Rules: non-empty, no leading/trailing slash, no whitespace, segments match
+ * `[a-zA-Z0-9][a-zA-Z0-9._-]*`, reserved segments `public` and `_ws` are
+ * blocked case-insensitively. Multiple slash-separated segments are allowed.
+ *
+ * @param {unknown} input
+ * @returns {SubPathResult}
+ */
 function validateSubPath(input) {
   if (typeof input !== "string") {
     return { ok: false, error: "Sub-path is required" };
@@ -94,6 +192,13 @@ function validateSubPath(input) {
   return { ok: true, value: trimmed };
 }
 
+/**
+ * Build a PortalUser object from `x-portal-user-*` headers set by an upstream
+ * auth proxy. Returns null when no header is present.
+ *
+ * @param {Object<string,string>} headers HTTP request headers (lower-cased).
+ * @returns {PortalUser|null}
+ */
 function extractPortalUser(headers) {
   const user = {};
   if (headers["x-portal-user-id"]) user.userId = headers["x-portal-user-id"];
@@ -104,16 +209,32 @@ function extractPortalUser(headers) {
   if (headers["x-portal-user-email"])
     user.email = headers["x-portal-user-email"];
   if (headers["x-portal-user-role"]) user.role = headers["x-portal-user-role"];
-  if (headers["x-portal-user-groups"]) {
-    try {
-      user.groups = JSON.parse(headers["x-portal-user-groups"]);
-    } catch (_) {
-      user.groups = headers["x-portal-user-groups"];
+  const groupsRaw = headers["x-portal-user-groups"];
+  if (typeof groupsRaw === "string" && groupsRaw.length > 0) {
+    if (groupsRaw.length > MAX_GROUPS_HEADER_BYTES) {
+      // Truncated → fall back to the raw string (safer than feeding multi-MB
+      // into JSON.parse). Auth proxy should never produce headers this large.
+      user.groups = groupsRaw.slice(0, MAX_GROUPS_HEADER_BYTES);
+    } else {
+      try {
+        user.groups = JSON.parse(groupsRaw);
+      } catch (_) {
+        user.groups = groupsRaw;
+      }
     }
   }
   return Object.keys(user).length > 0 ? user : null;
 }
 
+/**
+ * Remove a single route mount-point from an Express router by exact path
+ * match. Used at deploy teardown to drop the previous portal's HTTP route
+ * before re-registering on the same path.
+ *
+ * @param {Object} router  Express router (or Express app).
+ * @param {string} path    Exact route path to remove (no glob/regex).
+ * @returns {void}
+ */
 function removeRoute(router, path) {
   if (!router || !router.stack) return;
   router.stack = router.stack.filter(
@@ -121,6 +242,31 @@ function removeRoute(router, path) {
   );
 }
 
+/**
+ * @typedef {Object} EsbuildErrorLocation
+ * @property {number} line
+ */
+
+/**
+ * @typedef {Object} EsbuildErrorEntry
+ * @property {string}                text
+ * @property {EsbuildErrorLocation}  [location]
+ */
+
+/**
+ * @typedef {Object} EsbuildErrorLike
+ * @property {Array<EsbuildErrorEntry>} [errors]
+ * @property {string}                    [message]
+ */
+
+/**
+ * Flatten an esbuild error object into a single multi-line string suitable
+ * for `node.error()` and the in-page error overlay. Includes line numbers
+ * when esbuild provides them; falls back to `.message` otherwise.
+ *
+ * @param {EsbuildErrorLike} e
+ * @returns {string}
+ */
 function formatEsbuildError(e) {
   return e.errors?.length
     ? e.errors
@@ -132,7 +278,15 @@ function formatEsbuildError(e) {
     : e.message;
 }
 
-// Fast JSX syntax validation (no bundling). Returns null on OK, error string on fail.
+/**
+ * Fast JSX syntax validation via esbuild `transformSync` (no bundling, no
+ * filesystem lookup). Used at deploy time on individual component/utility
+ * snippets so the editor can attribute syntax errors to the offending node
+ * before any bundling pass runs on the portal.
+ *
+ * @param {string} jsx
+ * @returns {string|null}  Multi-line error string, or null when JSX is syntactically valid.
+ */
 function quickCheckSyntax(jsx) {
   if (!jsx || !jsx.trim()) return null;
   try {
@@ -149,6 +303,66 @@ function quickCheckSyntax(jsx) {
   }
 }
 
+// Identifiers that resolve at runtime through the bundler shim (React et al.)
+// rather than through registry / utility / local-def lookup. Anything in this
+// set is treated as "always satisfied" by findMissingComponentRefs.
+const REACT_BUILTIN_TAGS = new Set([
+  "React",
+  "Fragment",
+  "Suspense",
+  "StrictMode",
+  "Profiler",
+  "ReactDOM",
+  "App",
+]);
+
+const PASCAL_TAG_RE = /<\s*([A-Z][A-Za-z0-9_]*)/g;
+const RE_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * Find PascalCase JSX tags in `userCode` that have no visible definition.
+ *
+ * Used at deploy time to catch the case where a portal references a shared
+ * component (e.g. `<Header/>`) without the example flow that defines it
+ * being imported into Node-RED. Without this check the bundler silently
+ * skips the missing name and the browser crashes with `ReferenceError`.
+ *
+ * A tag is considered satisfied when ANY of:
+ *   - its name is in `knownNames` (component registry / utility symbols)
+ *   - its name is a React built-in (`React`, `Fragment`, `Suspense`, …)
+ *   - the bare identifier appears outside JSX-tag context in `userCode`
+ *     (covers `import {Name} from …`, `function Name(){…}`, `const Name = …`,
+ *     `class Name extends …`)
+ *
+ * @param {string} userCode
+ * @param {Set<string>} knownNames
+ * @returns {Set<string>}  PascalCase names referenced in JSX with nothing
+ *     to satisfy them.
+ */
+function findMissingComponentRefs(userCode, knownNames) {
+  if (!userCode || typeof userCode !== "string") return new Set();
+  const known = knownNames instanceof Set ? knownNames : new Set();
+
+  PASCAL_TAG_RE.lastIndex = 0;
+  const used = new Set();
+  let m;
+  while ((m = PASCAL_TAG_RE.exec(userCode)) !== null) used.add(m[1]);
+
+  const missing = new Set();
+  for (const name of used) {
+    if (REACT_BUILTIN_TAGS.has(name)) continue;
+    if (known.has(name)) continue;
+    const escaped = name.replace(RE_ESCAPE, "\\$&");
+    const stripped = userCode.replace(
+      new RegExp(`<\\s*/?\\s*${escaped}\\b`, "g"),
+      "",
+    );
+    if (new RegExp(`\\b${escaped}\\b`).test(stripped)) continue;
+    missing.add(name);
+  }
+  return missing;
+}
+
 module.exports = function (RED) {
   return createHelpers(RED);
 };
@@ -157,15 +371,40 @@ module.exports.validateSubPath = validateSubPath;
 module.exports.isSafeName = isSafeName;
 module.exports.quickCheckSyntax = quickCheckSyntax;
 module.exports.formatEsbuildError = formatEsbuildError;
+module.exports.extractPortalUser = extractPortalUser;
+module.exports.findMissingComponentRefs = findMissingComponentRefs;
+module.exports.NAME_MAX_LEN = NAME_MAX_LEN;
+module.exports.MAX_GROUPS_HEADER_BYTES = MAX_GROUPS_HEADER_BYTES;
 
+/**
+ * Factory that produces the runtime helper bag bound to a Node-RED instance.
+ * Returns the union of pure helpers (re-exported from module scope) and
+ * runtime helpers that need `RED` (disk cache, preInstall hook, transpile).
+ *
+ * @param {Object} RED  Node-RED runtime object.
+ * @returns {Object}    Helper bag — see the `return { … }` at the bottom of the function for the full surface.
+ */
 function createHelpers(RED) {
   // Package root — where react/react-dom live (this package's own node_modules)
   const pkgRoot = path.join(__dirname, "../..");
   // userDir — where dynamicModuleList installs user packages
   const userDir = RED.settings.userDir || path.join(__dirname, "../../../..");
 
-  // Skip npm install for packages already present in node_modules (offline/Docker)
-  RED.hooks.add("preInstall.fcPortal", (event) => {
+  /**
+   * `preInstall` hook (Node-RED 1.3+) — vetoes an npm install when the
+   * package is already on disk. Useful for offline/Docker setups where
+   * Node-RED's auto-install pass would otherwise try to hit the registry
+   * and fail. Hook itself is *optional by design*: any unexpected error
+   * inside the body MUST NOT bubble up (it would cancel an install path
+   * the user actually expected to run). We log at `trace` level so the
+   * developer can opt into diagnostics via `logging.level = trace` in
+   * `settings.js`, without spamming default-level logs.
+   *
+   * @param {{dir: string, module: string}} event
+   * @returns {boolean|void}  `false` skips the install; anything else proceeds.
+   * @listens RED.hooks#preInstall.portalReact
+   */
+  RED.hooks.add("preInstall.portalReact", (event) => {
     try {
       const modDir = path.join(event.dir, "node_modules", event.module);
       if (fs.existsSync(modDir)) {
@@ -174,13 +413,21 @@ function createHelpers(RED) {
         );
         return false;
       }
-    } catch (_) {}
+    } catch (e) {
+      RED.log.trace("[portal-react] preInstall hook err: " + e.message);
+    }
   });
 
   // ── Disk cache for JS bundles and CSS ────────────────────────
   const cacheDir = path.join(userDir, "fromcubes", "cache");
   fs.mkdirSync(cacheDir, { recursive: true });
 
+  /**
+   * Load a cached compiled bundle from disk by JSX hash.
+   *
+   * @param {string} jsxHash
+   * @returns {?{js: string, metafile: ?Object, error: null}}  null on cache miss.
+   */
   function readCachedJS(jsxHash) {
     try {
       const js = fs.readFileSync(path.join(cacheDir, jsxHash + ".js"), "utf8");
@@ -196,6 +443,14 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Persist a compiled bundle (and optional metafile) to disk under `<hash>.js`.
+   *
+   * @param {string} jsxHash
+   * @param {string} js
+   * @param {Object} [metafile]  esbuild metafile for size analysis.
+   * @returns {void}
+   */
   function writeCachedJS(jsxHash, js, metafile) {
     try {
       fs.writeFileSync(path.join(cacheDir, jsxHash + ".js"), js, "utf8");
@@ -211,6 +466,12 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Load a cached Tailwind CSS bundle from disk by JSX hash.
+   *
+   * @param {string} jsxHash
+   * @returns {?{css: string, cssHash: string}}  null on cache miss.
+   */
   function readCachedCSS(jsxHash) {
     try {
       const css = fs.readFileSync(
@@ -223,6 +484,13 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Persist a Tailwind CSS bundle to disk under `<hash>.css`.
+   *
+   * @param {string} jsxHash
+   * @param {string} css
+   * @returns {void}
+   */
   function writeCachedCSS(jsxHash, css) {
     try {
       fs.writeFileSync(path.join(cacheDir, jsxHash + ".css"), css, "utf8");
@@ -231,6 +499,13 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Remove cached `.js`, `.css`, and `.meta.json` files for a given hash.
+   * No-op when `jsxHash` is falsy. Errors are swallowed (best-effort cleanup).
+   *
+   * @param {?string} jsxHash
+   * @returns {void}
+   */
   function deleteCacheFiles(jsxHash) {
     if (!jsxHash) return;
     for (const ext of [".js", ".css", ".meta.json"]) {
@@ -240,6 +515,16 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * True when any other portal endpoint currently relies on `jsxHash`.
+   * Used before `deleteCacheFiles` so a still-active sibling portal does not
+   * lose its cache when a different portal redeploys to a new hash.
+   *
+   * @param {string} jsxHash
+   * @param {Object<string, {jsxHash: string}>} pageState   Endpoint → state.
+   * @param {string} excludeEndpoint  Endpoint to skip in the scan (the one whose hash is being replaced).
+   * @returns {boolean}
+   */
   function isHashInUse(jsxHash, pageState, excludeEndpoint) {
     for (const ep in pageState) {
       if (ep !== excludeEndpoint && pageState[ep]?.jsxHash === jsxHash)
@@ -248,6 +533,16 @@ function createHelpers(RED) {
     return false;
   }
 
+  /**
+   * Bundle the user JSX (with utility/library/import code already concatenated)
+   * into a minified IIFE. Pre-validates with `quickCheckSyntax` first to avoid
+   * esbuild `buildSync` deadlocks on malformed input. The `react`/`react-dom`
+   * alias points at this package's own copies so peer-dep packages share a
+   * single React instance.
+   *
+   * @param {string} jsx
+   * @returns {TranspileResult}
+   */
   function transpile(jsx) {
     // Pre-validate with transformSync (fast, no bundling) to avoid esbuild buildSync deadlock on syntax errors
     const syntaxErr = quickCheckSyntax(jsx);
@@ -301,6 +596,7 @@ function createHelpers(RED) {
     removeRoute,
     isSafeName,
     validateSubPath,
+    findMissingComponentRefs,
     pkgRoot,
     userDir,
     cacheDir,

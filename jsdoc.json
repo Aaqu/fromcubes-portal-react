@@ -1,0 +1,21 @@
+{
+  "plugins": ["node_modules/jsdoc-plugin-typescript"],
+  "typescript": {
+    "moduleRoot": "."
+  },
+  "source": {
+    "include": [
+      "nodes/portal-react.js",
+      "nodes/lib/helpers.js",
+      "nodes/lib/assets.js",
+      "nodes/lib/hooks.js",
+      "nodes/lib/router.js",
+      "nodes/lib/page-builder.js"
+    ]
+  },
+  "opts": {
+    "destination": "docs/api",
+    "readme": "README.md",
+    "recurse": true
+  }
+}

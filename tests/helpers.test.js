@@ -2,7 +2,11 @@
  * Unit tests for pure helpers exposed on the helpers module (no RED runtime).
  */
 
-const { validateSubPath, quickCheckSyntax } = require("../nodes/lib/helpers");
+const {
+  validateSubPath,
+  quickCheckSyntax,
+  findMissingComponentRefs,
+} = require("../nodes/lib/helpers");
 
 describe("validateSubPath", () => {
   it("accepts a simple single segment", () => {
@@ -114,5 +118,132 @@ describe("quickCheckSyntax", () => {
   it("returns error for ReferenceError-shaped code (still parses) → null", () => {
     // dsada is undefined at runtime, but valid syntax — should pass
     expect(quickCheckSyntax("function App(){return dsada}")).toBeNull();
+  });
+});
+
+describe("findMissingComponentRefs", () => {
+  it("returns empty when name is in registry", () => {
+    expect(
+      findMissingComponentRefs("function App(){return <Header/>}", new Set(["Header"])),
+    ).toEqual(new Set());
+  });
+
+  it("flags name not in registry and not defined locally", () => {
+    expect(
+      findMissingComponentRefs(
+        'function App(){return <Header title="x"/>}',
+        new Set(),
+      ),
+    ).toEqual(new Set(["Header"]));
+  });
+
+  it("does not flag locally-defined function component", () => {
+    expect(
+      findMissingComponentRefs(
+        "function Header(){return null} function App(){return <Header/>}",
+        new Set(),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("does not flag locally-defined const component", () => {
+    expect(
+      findMissingComponentRefs(
+        "const Header = () => null; function App(){return <Header/>}",
+        new Set(),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("does not flag named import", () => {
+    expect(
+      findMissingComponentRefs(
+        'import {Canvas} from "@react-three/fiber"; function App(){return <Canvas/>}',
+        new Set(),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("does not flag default import", () => {
+    expect(
+      findMissingComponentRefs(
+        'import Canvas from "x"; function App(){return <Canvas/>}',
+        new Set(),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("does not flag React built-ins (Fragment / Suspense)", () => {
+    expect(
+      findMissingComponentRefs(
+        "function App(){return <Fragment><Suspense/></Fragment>}",
+        new Set(),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("collects multiple missing names", () => {
+    expect(
+      findMissingComponentRefs(
+        "function App(){return <div><Header/><Stat/></div>}",
+        new Set(),
+      ),
+    ).toEqual(new Set(["Header", "Stat"]));
+  });
+
+  it("ignores lower-case HTML tags", () => {
+    expect(
+      findMissingComponentRefs(
+        "function App(){return <div><span/><p>x</p></div>}",
+        new Set(),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("mixes registry hits and misses", () => {
+    expect(
+      findMissingComponentRefs(
+        "function App(){return <Page><Header/></Page>}",
+        new Set(["Page"]),
+      ),
+    ).toEqual(new Set(["Header"]));
+  });
+
+  it("treats utility symbols (passed via knownNames) as satisfied", () => {
+    // A utility node may declare a top-level component; pass its symbol set in.
+    expect(
+      findMissingComponentRefs(
+        "function App(){return <Widget/>}",
+        new Set(["Widget"]),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("handles empty / non-string input safely", () => {
+    expect(findMissingComponentRefs("", new Set())).toEqual(new Set());
+    expect(findMissingComponentRefs(null, new Set())).toEqual(new Set());
+    expect(findMissingComponentRefs(undefined, new Set())).toEqual(new Set());
+  });
+
+  it("does not flag self-closing tags whose name is also defined", () => {
+    expect(
+      findMissingComponentRefs(
+        "class Header extends React.Component{} function App(){return <Header/>}",
+        new Set(),
+      ),
+    ).toEqual(new Set());
+  });
+
+  it("does not flag npm component when import is preserved (regression: portal-react.js call-site)", () => {
+    // Mirrors a real Three.js example componentCode — both the import and
+    // the <Canvas/> usage must stay together when fed to the helper.
+    const code = [
+      "import { Canvas } from '@react-three/fiber';",
+      "import { OrbitControls } from '@react-three/drei';",
+      "function App(){",
+      "  return (<Canvas><OrbitControls/></Canvas>);",
+      "}",
+    ].join("\n");
+    expect(findMissingComponentRefs(code, new Set())).toEqual(new Set());
   });
 });
