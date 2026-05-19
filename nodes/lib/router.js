@@ -1,6 +1,6 @@
+/** @module nodes/lib/router */
+
 /**
- * @module nodes/lib/router
- *
  * Pure routing function for portal-react WS outbound messages.
  *
  * Split out from portal-react.js so it can be unit-tested without a full
@@ -15,12 +15,16 @@
  * Returns a shallow summary `{ mode, delivered }` for observability/tests.
  * The caller is responsible for any side-effects keyed off the mode
  * (e.g. caching the last broadcast payload for new-client recovery).
- *
+ */
+
+/**
  * @typedef {Object} RouteContext
  * @property {Map<string, import("ws").WebSocket>} clients   portalClient → ws
  * @property {Map<string, Set<import("ws").WebSocket>>} userIndex userId → ws set
  * @property {(ws: any, frame: string, msg: Object) => boolean} sendTo
- *
+ */
+
+/**
  * @typedef {Object} RouteResult
  * @property {"unicast"|"user-cast"|"broadcast"} mode
  * @property {number} delivered

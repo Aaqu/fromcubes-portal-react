@@ -39,19 +39,24 @@
     "ws": "^8.0.0 || ^9.0.0"
   },
   "peerDependenciesMeta": {
-    "ws": { "optional": false }
+    "ws": {
+      "optional": false
+    }
   },
   "devDependencies": {
-    "node-red": "5.0.0-beta.5",
+    "jsdoc": "^4.0.5",
+    "jsdoc-plugin-typescript": "^3.2.1",
+    "node-red": "5.0.0-beta.6",
     "node-red-node-test-helper": "^0.3.4",
     "prettier": "^3.8.3",
     "supertest": "^7.2.2",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.6"
   },
   "scripts": {
     "start": "node-red",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docs": "jsdoc -c jsdoc.json"
   },
   "repository": {
     "type": "git",

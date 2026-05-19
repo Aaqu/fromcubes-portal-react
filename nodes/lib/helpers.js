@@ -1,21 +1,27 @@
+/** @module nodes/lib/helpers */
+
 /**
- * @module nodes/lib/helpers
- *
  * Shared helper functions for portal-react. Pure helpers (hash, validators,
  * esbuild wrappers) are exported at module level; runtime helpers that need
  * `RED` (cache, tailwind, preInstall hook) are produced by the default export
  * factory.
- *
+ */
+
+/**
  * @typedef {Object} TranspileResult
  * @property {string|null} js          Compiled IIFE bundle, or null on error.
  * @property {string|null} [error]     Multi-line error description from esbuild.
  * @property {Object}      [metafile]  Optional esbuild metafile (size analysis).
- *
+ */
+
+/**
  * @typedef {Object} SubPathResult
  * @property {boolean} ok
  * @property {string}  [value]
  * @property {string}  [error]
- *
+ */
+
+/**
  * @typedef {Object} PortalUser
  * @property {string}              [userId]
  * @property {string}              [userName]
@@ -49,6 +55,13 @@ const twCompile = require("tailwindcss").compile;
 const CANDIDATE_RE = /[a-zA-Z0-9_\-:.\/\[\]#%]+/g;
 
 let twCompiled = null;
+/**
+ * Lazily compile the Tailwind base stylesheet. Result is memoized at module
+ * scope — first call resolves async stylesheet imports, every subsequent
+ * call returns the cached compiler.
+ *
+ * @returns {Promise<Object>}  Tailwind `compile()` result with a `.build()` method.
+ */
 async function getTwCompiled() {
   if (twCompiled) return twCompiled;
   twCompiled = await twCompile(`@import 'tailwindcss';`, {
@@ -68,6 +81,13 @@ async function getTwCompiled() {
   return twCompiled;
 }
 
+/**
+ * Generate the per-page Tailwind CSS bundle by scanning `source` for utility
+ * class candidates and feeding them to the compiled Tailwind core.
+ *
+ * @param {string} source                       Source text to scan for class candidates.
+ * @returns {Promise<{css: string, cssHash: string}>}
+ */
 async function generateCSS(source) {
   const cssHash = hash(source);
   const compiled = await getTwCompiled();
@@ -206,6 +226,15 @@ function extractPortalUser(headers) {
   return Object.keys(user).length > 0 ? user : null;
 }
 
+/**
+ * Remove a single route mount-point from an Express router by exact path
+ * match. Used at deploy teardown to drop the previous portal's HTTP route
+ * before re-registering on the same path.
+ *
+ * @param {Object} router  Express router (or Express app).
+ * @param {string} path    Exact route path to remove (no glob/regex).
+ * @returns {void}
+ */
 function removeRoute(router, path) {
   if (!router || !router.stack) return;
   router.stack = router.stack.filter(
@@ -213,6 +242,31 @@ function removeRoute(router, path) {
   );
 }
 
+/**
+ * @typedef {Object} EsbuildErrorLocation
+ * @property {number} line
+ */
+
+/**
+ * @typedef {Object} EsbuildErrorEntry
+ * @property {string}                text
+ * @property {EsbuildErrorLocation}  [location]
+ */
+
+/**
+ * @typedef {Object} EsbuildErrorLike
+ * @property {Array<EsbuildErrorEntry>} [errors]
+ * @property {string}                    [message]
+ */
+
+/**
+ * Flatten an esbuild error object into a single multi-line string suitable
+ * for `node.error()` and the in-page error overlay. Includes line numbers
+ * when esbuild provides them; falls back to `.message` otherwise.
+ *
+ * @param {EsbuildErrorLike} e
+ * @returns {string}
+ */
 function formatEsbuildError(e) {
   return e.errors?.length
     ? e.errors
@@ -249,6 +303,66 @@ function quickCheckSyntax(jsx) {
   }
 }
 
+// Identifiers that resolve at runtime through the bundler shim (React et al.)
+// rather than through registry / utility / local-def lookup. Anything in this
+// set is treated as "always satisfied" by findMissingComponentRefs.
+const REACT_BUILTIN_TAGS = new Set([
+  "React",
+  "Fragment",
+  "Suspense",
+  "StrictMode",
+  "Profiler",
+  "ReactDOM",
+  "App",
+]);
+
+const PASCAL_TAG_RE = /<\s*([A-Z][A-Za-z0-9_]*)/g;
+const RE_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+
+/**
+ * Find PascalCase JSX tags in `userCode` that have no visible definition.
+ *
+ * Used at deploy time to catch the case where a portal references a shared
+ * component (e.g. `<Header/>`) without the example flow that defines it
+ * being imported into Node-RED. Without this check the bundler silently
+ * skips the missing name and the browser crashes with `ReferenceError`.
+ *
+ * A tag is considered satisfied when ANY of:
+ *   - its name is in `knownNames` (component registry / utility symbols)
+ *   - its name is a React built-in (`React`, `Fragment`, `Suspense`, …)
+ *   - the bare identifier appears outside JSX-tag context in `userCode`
+ *     (covers `import {Name} from …`, `function Name(){…}`, `const Name = …`,
+ *     `class Name extends …`)
+ *
+ * @param {string} userCode
+ * @param {Set<string>} knownNames
+ * @returns {Set<string>}  PascalCase names referenced in JSX with nothing
+ *     to satisfy them.
+ */
+function findMissingComponentRefs(userCode, knownNames) {
+  if (!userCode || typeof userCode !== "string") return new Set();
+  const known = knownNames instanceof Set ? knownNames : new Set();
+
+  PASCAL_TAG_RE.lastIndex = 0;
+  const used = new Set();
+  let m;
+  while ((m = PASCAL_TAG_RE.exec(userCode)) !== null) used.add(m[1]);
+
+  const missing = new Set();
+  for (const name of used) {
+    if (REACT_BUILTIN_TAGS.has(name)) continue;
+    if (known.has(name)) continue;
+    const escaped = name.replace(RE_ESCAPE, "\\$&");
+    const stripped = userCode.replace(
+      new RegExp(`<\\s*/?\\s*${escaped}\\b`, "g"),
+      "",
+    );
+    if (new RegExp(`\\b${escaped}\\b`).test(stripped)) continue;
+    missing.add(name);
+  }
+  return missing;
+}
+
 module.exports = function (RED) {
   return createHelpers(RED);
 };
@@ -258,9 +372,18 @@ module.exports.isSafeName = isSafeName;
 module.exports.quickCheckSyntax = quickCheckSyntax;
 module.exports.formatEsbuildError = formatEsbuildError;
 module.exports.extractPortalUser = extractPortalUser;
+module.exports.findMissingComponentRefs = findMissingComponentRefs;
 module.exports.NAME_MAX_LEN = NAME_MAX_LEN;
 module.exports.MAX_GROUPS_HEADER_BYTES = MAX_GROUPS_HEADER_BYTES;
 
+/**
+ * Factory that produces the runtime helper bag bound to a Node-RED instance.
+ * Returns the union of pure helpers (re-exported from module scope) and
+ * runtime helpers that need `RED` (disk cache, preInstall hook, transpile).
+ *
+ * @param {Object} RED  Node-RED runtime object.
+ * @returns {Object}    Helper bag — see the `return { … }` at the bottom of the function for the full surface.
+ */
 function createHelpers(RED) {
   // Package root — where react/react-dom live (this package's own node_modules)
   const pkgRoot = path.join(__dirname, "../..");
@@ -299,6 +422,12 @@ function createHelpers(RED) {
   const cacheDir = path.join(userDir, "fromcubes", "cache");
   fs.mkdirSync(cacheDir, { recursive: true });
 
+  /**
+   * Load a cached compiled bundle from disk by JSX hash.
+   *
+   * @param {string} jsxHash
+   * @returns {?{js: string, metafile: ?Object, error: null}}  null on cache miss.
+   */
   function readCachedJS(jsxHash) {
     try {
       const js = fs.readFileSync(path.join(cacheDir, jsxHash + ".js"), "utf8");
@@ -314,6 +443,14 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Persist a compiled bundle (and optional metafile) to disk under `<hash>.js`.
+   *
+   * @param {string} jsxHash
+   * @param {string} js
+   * @param {Object} [metafile]  esbuild metafile for size analysis.
+   * @returns {void}
+   */
   function writeCachedJS(jsxHash, js, metafile) {
     try {
       fs.writeFileSync(path.join(cacheDir, jsxHash + ".js"), js, "utf8");
@@ -329,6 +466,12 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Load a cached Tailwind CSS bundle from disk by JSX hash.
+   *
+   * @param {string} jsxHash
+   * @returns {?{css: string, cssHash: string}}  null on cache miss.
+   */
   function readCachedCSS(jsxHash) {
     try {
       const css = fs.readFileSync(
@@ -341,6 +484,13 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Persist a Tailwind CSS bundle to disk under `<hash>.css`.
+   *
+   * @param {string} jsxHash
+   * @param {string} css
+   * @returns {void}
+   */
   function writeCachedCSS(jsxHash, css) {
     try {
       fs.writeFileSync(path.join(cacheDir, jsxHash + ".css"), css, "utf8");
@@ -349,6 +499,13 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * Remove cached `.js`, `.css`, and `.meta.json` files for a given hash.
+   * No-op when `jsxHash` is falsy. Errors are swallowed (best-effort cleanup).
+   *
+   * @param {?string} jsxHash
+   * @returns {void}
+   */
   function deleteCacheFiles(jsxHash) {
     if (!jsxHash) return;
     for (const ext of [".js", ".css", ".meta.json"]) {
@@ -358,6 +515,16 @@ function createHelpers(RED) {
     }
   }
 
+  /**
+   * True when any other portal endpoint currently relies on `jsxHash`.
+   * Used before `deleteCacheFiles` so a still-active sibling portal does not
+   * lose its cache when a different portal redeploys to a new hash.
+   *
+   * @param {string} jsxHash
+   * @param {Object<string, {jsxHash: string}>} pageState   Endpoint → state.
+   * @param {string} excludeEndpoint  Endpoint to skip in the scan (the one whose hash is being replaced).
+   * @returns {boolean}
+   */
   function isHashInUse(jsxHash, pageState, excludeEndpoint) {
     for (const ep in pageState) {
       if (ep !== excludeEndpoint && pageState[ep]?.jsxHash === jsxHash)
@@ -366,6 +533,16 @@ function createHelpers(RED) {
     return false;
   }
 
+  /**
+   * Bundle the user JSX (with utility/library/import code already concatenated)
+   * into a minified IIFE. Pre-validates with `quickCheckSyntax` first to avoid
+   * esbuild `buildSync` deadlocks on malformed input. The `react`/`react-dom`
+   * alias points at this package's own copies so peer-dep packages share a
+   * single React instance.
+   *
+   * @param {string} jsx
+   * @returns {TranspileResult}
+   */
   function transpile(jsx) {
     // Pre-validate with transformSync (fast, no bundling) to avoid esbuild buildSync deadlock on syntax errors
     const syntaxErr = quickCheckSyntax(jsx);
@@ -419,6 +596,7 @@ function createHelpers(RED) {
     removeRoute,
     isSafeName,
     validateSubPath,
+    findMissingComponentRefs,
     pkgRoot,
     userDir,
     cacheDir,

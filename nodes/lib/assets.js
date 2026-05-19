@@ -1,18 +1,22 @@
+/** @module nodes/lib/assets */
+
 /**
- * @module nodes/lib/assets
- *
  * Portal Assets — static file serving with security validation.
  *
  * Exports pure validators (for unit-testing without RED) and a
  * `registerAssets` factory that mounts Express routes on `RED.httpAdmin`
  * (admin CRUD, auth-gated) and `RED.httpNode` (public read-only serving).
- *
+ */
+
+/**
  * @typedef {Object} AssetEntry
  * @property {string} name             Relative path (POSIX, forward slashes).
  * @property {"file"|"dir"} type
  * @property {number} [size]           Bytes — file only.
  * @property {number} [mtime]          fs.statSync.mtimeMs — file only.
- *
+ */
+
+/**
  * @typedef {Object} AssetsStats
  * @property {number} size             Total bytes across all files (excluding symlinks).
  * @property {number} count            Total file count.
@@ -31,6 +35,15 @@ const MAX_ASSETS_FILES = 1000;
 
 // ── Pure validators ───────────────────────────────────────────
 
+/**
+ * True when `s` is a single path segment safe to use under the assets root:
+ * non-empty string ≤255 chars, no Windows-illegal characters (`\:*?"<>|\0`),
+ * not a Windows reserved name (CON, PRN, …), no leading dot, no trailing
+ * `.` or space, and not the special `..` / `.` traversal markers.
+ *
+ * @param {*} s
+ * @returns {boolean}
+ */
 function isSafePathSegment(s) {
   return (
     typeof s === "string" &&
@@ -90,6 +103,15 @@ function safePath(rel, assetsDir) {
 
 // ── Filesystem helpers ────────────────────────────────────────
 
+/**
+ * Recursively list the contents of an assets directory. Symbolic links are
+ * skipped to defend against symlink-escape. Names are returned relative to
+ * the initial call (using `/` as separator).
+ *
+ * @param {string} dir       Absolute filesystem directory to scan.
+ * @param {string} [prefix]  Path prefix accumulated by recursion ("" at the root).
+ * @returns {Array<AssetEntry>}
+ */
 function scanDir(dir, prefix) {
   const results = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -106,6 +128,15 @@ function scanDir(dir, prefix) {
   return results;
 }
 
+/**
+ * Compute total file count and aggregate byte size under the assets root.
+ * Used to enforce the per-portal `MAX_ASSETS_BYTES` / `MAX_ASSETS_FILES`
+ * quotas before accepting an upload. Symbolic links are skipped. Filesystem
+ * errors (e.g. assets dir doesn't exist yet) yield `{size:0, count:0}`.
+ *
+ * @param {string} assetsDir
+ * @returns {{size: number, count: number}}
+ */
 function getAssetsStats(assetsDir) {
   let size = 0, count = 0;
   function walk(dir) {

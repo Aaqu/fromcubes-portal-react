@@ -1,6 +1,6 @@
+/** @module @aaqu/fromcubes-portal-react */
+
 /**
- * @module @aaqu/fromcubes-portal-react
- *
  * Node-RED node that serves React apps from configurable HTTP endpoints
  * with live WebSocket data binding. JSX is transpiled server-side via esbuild
  * at deploy time — browsers receive pre-compiled JS.
@@ -8,7 +8,15 @@
  * Module-global state lives on `RED.settings.portalReact*` so it survives
  * Full deploys (Node-RED closes and re-opens every node on a Full deploy;
  * the `RED.settings` namespace persists across that cycle).
- *
+ */
+
+/**
+ * @typedef {Object} LibSpec
+ * @property {string} module          npm package name (auto-installed at deploy).
+ * @property {string} [var]           Optional global var name when bundled.
+ */
+
+/**
  * @typedef {Object} PortalConfig
  * @property {string}  subPath           URL segment served under `/fromcubes/<subPath>`.
  * @property {string}  [endpoint]        Legacy field — hard-fails on deploy if subPath empty.
@@ -17,9 +25,10 @@
  * @property {string}  [customHead]      Raw HTML injected into `<head>` (trusted-author content).
  * @property {boolean} [portalAuth]      Read `x-portal-user-*` headers from incoming HTTP requests.
  * @property {boolean} [showWsStatus]    Render the in-page `#__cs` connection badge.
- * @property {Array<{module: string, var?: string}>} [libs]
- *   npm packages auto-installed at deploy via `dynamicModuleList`.
- *
+ * @property {Array<LibSpec>} [libs]    npm packages auto-installed at deploy via `dynamicModuleList`.
+ */
+
+/**
  * @typedef {Object} ClientInfo
  * @property {string}                  portalClient  Server-assigned per-tab UUID.
  * @property {string}                  [userId]
@@ -28,18 +37,45 @@
  * @property {string}                  [email]
  * @property {string}                  [role]
  * @property {string|Array<string>}    [groups]
- *
+ */
+
+/**
  * @typedef {Object} MessagePayload
  * @property {*}            payload
  * @property {string}       [topic]
  * @property {ClientInfo}   [_client]    Server-side identity (set on outbound WS msgs).
- *
+ */
+
+/**
  * @typedef {Object} RouteResult
  * @property {"unicast"|"user-cast"|"broadcast"} mode
  * @property {number} delivered
- *
+ */
+
+/**
+ * @typedef {Object} CompiledBundle
+ * @property {?string}  js
+ * @property {?string}  error
+ * @property {Object}   [metafile]      esbuild metafile (size analysis).
+ */
+
+/**
+ * @typedef {Object} ComponentNodeConfig
+ * @property {string}  [name]
+ * @property {string}  compName
+ * @property {string}  compCode
+ */
+
+/**
+ * @typedef {Object} UtilityNodeConfig
+ * @property {string}  [name]
+ * @property {string}  utilName
+ * @property {string}  utilCode
+ */
+
+/**
  * @typedef {Object} PageState
- * @property {{js: ?string, error: ?string, metafile?: Object}} compiled
+ * @property {CompiledBundle} compiled
  * @property {string}  contentHash       sha256-16 of the compiled JS.
  * @property {string}  jsxHash
  * @property {Promise<{css: string, cssHash: string}>} cssReady
@@ -51,7 +87,7 @@
  * @property {boolean} portalAuth
  * @property {boolean} showWsStatus
  * @property {?string} errorSource       Component / utility name responsible for the build error.
- * @property {?string} errorKind         'component' | 'utility' | 'missing-return' | 'transpile' | 'rebuild'
+ * @property {?string} errorKind         'component' | 'utility' | 'missing-component' | 'missing-return' | 'transpile' | 'rebuild'
  * @property {?Object} lastGood          Snapshot of the previous successful build (degraded-mode fallback).
  * @property {boolean} [cssError]        Tailwind generation failed on the last attempt.
  * @property {boolean} [building]
@@ -188,6 +224,14 @@ module.exports = function (RED) {
   // Truncate with an ellipsis so long error fragments, component names, or
   // endpoint paths don't spill past the node tile.
   const STATUS_MAX = 20;
+  /**
+   * Truncate a status text to at most `STATUS_MAX` characters, replacing the
+   * final character with an ellipsis when truncation occurs. Keeps node tile
+   * width predictable per the Node-RED appearance guidelines.
+   *
+   * @param {*} s
+   * @returns {string}
+   */
   function shortStatus(s) {
     s = String(s == null ? "" : s);
     return s.length <= STATUS_MAX ? s : s.slice(0, STATUS_MAX - 1) + "…";
@@ -312,6 +356,15 @@ module.exports = function (RED) {
   }
   const pingTick = RED.settings.portalReactPingTick;
 
+  /**
+   * Single tick of the WS keep-alive sweep. For each registered ws.Server, drop
+   * sockets whose previous ping went unanswered (they are dead) and ping the
+   * survivors. The pong handler resets `_isAlive` back to true. Runs on a
+   * shared interval so multiple portals share one timer.
+   *
+   * @returns {void}
+   * @private
+   */
   function _pingSweep() {
     for (const srv of pingedServers) {
       try {
@@ -494,6 +547,7 @@ module.exports = function (RED) {
     removeRoute,
     isSafeName,
     validateSubPath,
+    findMissingComponentRefs,
     userDir,
     readCachedJS,
     writeCachedJS,
@@ -525,7 +579,7 @@ module.exports = function (RED) {
    *   - syntax-checks the JSX via `quickCheckSyntax`
    *   - schedules a selective rebuild of every portal that references this name
    *
-   * @param {{name?: string, compName: string, compCode: string}} config
+   * @param {ComponentNodeConfig} config
    * @returns {void}
    * @fires Node-RED#close  via node.on("close", …) — removes registration on disable / delete.
    * @private
@@ -646,7 +700,7 @@ module.exports = function (RED) {
    * owner table so identifiers don't collide with component names or other
    * utility nodes.
    *
-   * @param {{name?: string, utilName: string, utilCode: string}} config
+   * @param {UtilityNodeConfig} config
    * @returns {void}
    * @fires Node-RED#close  on disable / delete — frees registry + owned symbols.
    * @private
@@ -894,7 +948,8 @@ module.exports = function (RED) {
 
       if (st && st.compiled && st.compiled.error) {
         let base;
-        if (st.errorSource) base = "broken: " + st.errorSource;
+        if (st.errorKind === "missing-component") base = "missing: " + st.errorSource;
+        else if (st.errorSource) base = "broken: " + st.errorSource;
         else if (st.errorKind === "missing-return") base = "no return";
         else if (st.errorKind === "rebuild") base = "rebuild err";
         else base = "transpile err";
@@ -1107,6 +1162,24 @@ module.exports = function (RED) {
         const cleanCompCode = componentCode.replace(importRe, "").trim();
         const cleanUtilJsx = utilityJsx.replace(importRe, "").trim();
 
+        // ── Check: JSX references a PascalCase tag with no definition ──
+        // Catches the common foot-gun where a portal references a shared
+        // component (e.g. <Header/>) without the example flow that defines
+        // it being imported. Without this check the bundler silently skips
+        // the missing name and the browser crashes with ReferenceError.
+        let missingComps = null;
+        {
+          const knownNames = new Set(Object.keys(registry));
+          for (const [, syms] of utilSymbols) {
+            for (const s of syms) knownNames.add(s);
+          }
+          // Use raw componentCode (with imports intact) so the helper can see
+          // `import {Canvas} from '@react-three/fiber'` and not flag Canvas
+          // as a missing fc-portal-component.
+          const miss = findMissingComponentRefs(componentCode, knownNames);
+          if (miss.size > 0) missingComps = [...miss].sort();
+        }
+
         // Dedupe imports across all sources (libs may already pull React; user
         // and utility may import the same package).
         const seenImports = new Set();
@@ -1230,8 +1303,23 @@ module.exports = function (RED) {
         // ── Resolve compiled (success or unified error) ──
         let compiled;
         let cacheHit = false;
-        let errorKind = null; // 'component' | 'missing-return' | 'transpile'
-        if (errorSource) {
+        let errorKind = null; // 'component' | 'utility' | 'missing-component' | 'missing-return' | 'transpile'
+        if (missingComps) {
+          const list = missingComps.join(", ");
+          const plural = missingComps.length > 1;
+          const hint = plural
+            ? `Make sure these fc-portal-components exist (e.g. import the "Shared Components" example flow): ${list}.`
+            : `Make sure a fc-portal-component named "${missingComps[0]}" exists (e.g. import the "Shared Components" example flow), then redeploy.`;
+          compiled = {
+            js: null,
+            error: `Missing component${plural ? "s" : ""}: ${list}\n\n${hint}`,
+          };
+          errorKind = "missing-component";
+          // Re-use errorSource for status/text — first missing name + count tail.
+          errorSource = plural
+            ? `${missingComps[0]} +${missingComps.length - 1}`
+            : missingComps[0];
+        } else if (errorSource) {
           const srcErr =
             errorSourceKind === "utility"
               ? utilities[errorSource].error
@@ -1263,7 +1351,9 @@ module.exports = function (RED) {
 
         if (compiled.error) {
           node.error(
-            (errorKind === "component"
+            (errorKind === "missing-component"
+              ? "Missing component(s) in JSX: "
+              : errorKind === "component"
               ? `Component "${errorSource}" syntax error: `
               : errorKind === "utility"
               ? `Utility "${errorSource}" syntax error: `

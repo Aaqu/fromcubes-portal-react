@@ -237,6 +237,11 @@ That's the entire contract. Reconnect logic, recovery seeding, and the building/
 - The endpoint serves a generated error page with the message (or, if a previous good build exists, keeps serving that build and shows a small dismissible error banner — degraded mode).
 - Fix the code, redeploy. The cache key is the JSX hash, so the next deploy bypasses the broken cache automatically.
 
+**Missing components:**
+
+- A reference to a PascalCase tag (`<Header/>`) with no provider — neither in the registry, nor in any utility's top-level symbols, nor defined locally, nor imported, nor a React built-in — is caught at deploy time, before bundling.
+- Status turns red with `missing: <Name>` (suffixed `+N` when more than one). The page serves an error overlay listing the missing names and a hint to import the example flow that defines them. No runtime `ReferenceError` in the browser.
+
 ## Browser bundle
 
 A single esbuild pass produces one IIFE containing React, every requested npm package, the utilities and components actually referenced, and the user JSX. Tree-shaking drops unused exports. The `alias` on `react` / `react-dom` makes peer-dep packages share the same React instance — no duplicate React, no hooks errors.
