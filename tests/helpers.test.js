@@ -6,6 +6,7 @@ const {
   validateSubPath,
   quickCheckSyntax,
   findMissingComponentRefs,
+  serveableHash,
 } = require("../nodes/lib/helpers");
 
 describe("validateSubPath", () => {
@@ -245,5 +246,44 @@ describe("findMissingComponentRefs", () => {
       "}",
     ].join("\n");
     expect(findMissingComponentRefs(code, new Set())).toEqual(new Set());
+  });
+});
+
+describe("serveableHash", () => {
+  it("returns '' for missing state", () => {
+    expect(serveableHash(undefined)).toBe("");
+    expect(serveableHash(null)).toBe("");
+  });
+
+  it("returns '' when compiled is nulled (post-close teardown window)", () => {
+    // The exact state that caused the reload loop: compiled nulled by close()
+    // but a stale contentHash left behind. Must NOT be advertised.
+    expect(serveableHash({ compiled: null, contentHash: "abc123" })).toBe("");
+  });
+
+  it("returns '' for a hard build error with no fallback", () => {
+    expect(
+      serveableHash({ compiled: { error: "boom", js: null }, contentHash: "" }),
+    ).toBe("");
+  });
+
+  it("returns the lastGood hash in degraded mode (build error + fallback)", () => {
+    expect(
+      serveableHash({
+        compiled: { error: "boom", js: null },
+        contentHash: "",
+        lastGood: { contentHash: "good99" },
+      }),
+    ).toBe("good99");
+  });
+
+  it("returns contentHash for a real serveable build", () => {
+    expect(
+      serveableHash({ compiled: { error: null, js: "/*bundle*/" }, contentHash: "live42" }),
+    ).toBe("live42");
+  });
+
+  it("returns '' for a building placeholder (no compiled yet)", () => {
+    expect(serveableHash({ building: true, contentHash: "stale" })).toBe("");
   });
 });
