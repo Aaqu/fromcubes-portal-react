@@ -544,6 +544,7 @@ module.exports = function (RED) {
     quickCheckSyntax,
     generateCSS,
     extractPortalUser,
+    serveableHash,
     removeRoute,
     isSafeName,
     validateSubPath,
@@ -1564,7 +1565,11 @@ module.exports = function (RED) {
         RED.httpNode.get(endpoint, async function (_req, res) {
           try {
             const state = pageState[endpoint];
-            if (!state || state.building) {
+            // `!state.compiled` is the teardown window between node close
+            // (which nulls compiled) and the next rebuild. Treat it like
+            // "building" — serve the holding page (200), never fall through to
+            // `state.compiled.error` which would throw and 500 via the catch.
+            if (!state || state.building || !state.compiled) {
               const bWsPath = state?.wsPath || wsPath;
               res
                 .set("Cache-Control", "no-store")
@@ -1721,10 +1726,11 @@ module.exports = function (RED) {
           // In degraded mode (current build failed but lastGood served), advertise
           // the lastGood hash so the freshly reloaded client matches the JS we sent.
           const cs = pageState[endpoint];
-          const contentHash =
-            cs?.compiled?.error && cs?.lastGood
-              ? cs.lastGood.contentHash
-              : cs?.contentHash || "";
+          // Only advertise a non-empty hash when there is a page the GET route
+          // can actually serve (real build, or degraded lastGood). Advertising
+          // a stale hash for a nulled/error state drives the served error page
+          // into a reload loop. See helpers.serveableHash.
+          const contentHash = serveableHash(cs);
           wsSend(ws, { type: "version", hash: contentHash });
 
           // Send assigned portalClient to browser
@@ -1964,6 +1970,11 @@ module.exports = function (RED) {
             st.cssReady = null;
             st.compiled = null;
             st.css = null;
+            // Clear the advertised hash too. Leaving a stale non-empty
+            // contentHash while compiled is null makes the WS `version` frame
+            // advertise a "ready" page that the GET route can no longer serve,
+            // which drives the served error/building page into a reload loop.
+            st.contentHash = "";
           }
 
           // Clean up route only on full removal/disable (not on redeploy).

@@ -363,6 +363,30 @@ function findMissingComponentRefs(userCode, knownNames) {
   return missing;
 }
 
+/**
+ * Resolve the content hash the server may advertise to a browser over the WS
+ * `version` frame. The hash MUST only be non-empty when there is a page the
+ * GET route can actually serve — otherwise a stale hash makes the served error
+ * / building page reload in a tight loop (it reloads on any non-empty
+ * `version` hash).
+ *
+ * States, in order:
+ *   - no state / nulled `compiled` (post-`close` teardown window) → ""
+ *   - degraded (build error but a previous good build is kept) → lastGood hash
+ *   - hard build error with no fallback → ""
+ *   - real serveable build (`compiled.js` present) → contentHash
+ *
+ * @param {?PageState} state  pageState[endpoint] (may be null/partially torn down).
+ * @returns {string}          Hash to advertise, or "" when nothing is serveable.
+ */
+function serveableHash(state) {
+  if (!state || !state.compiled) return "";
+  if (state.compiled.error) {
+    return state.lastGood ? state.lastGood.contentHash || "" : "";
+  }
+  return state.compiled.js ? state.contentHash || "" : "";
+}
+
 module.exports = function (RED) {
   return createHelpers(RED);
 };
@@ -373,6 +397,7 @@ module.exports.quickCheckSyntax = quickCheckSyntax;
 module.exports.formatEsbuildError = formatEsbuildError;
 module.exports.extractPortalUser = extractPortalUser;
 module.exports.findMissingComponentRefs = findMissingComponentRefs;
+module.exports.serveableHash = serveableHash;
 module.exports.NAME_MAX_LEN = NAME_MAX_LEN;
 module.exports.MAX_GROUPS_HEADER_BYTES = MAX_GROUPS_HEADER_BYTES;
 
@@ -593,6 +618,7 @@ function createHelpers(RED) {
     quickCheckSyntax,
     generateCSS,
     extractPortalUser,
+    serveableHash,
     removeRoute,
     isSafeName,
     validateSubPath,

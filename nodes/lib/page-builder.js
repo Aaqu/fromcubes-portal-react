@@ -218,6 +218,16 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
           // Flushed in onopen so node status can go red even when the
           // exception fires synchronously during initial bundle execution.
           _pendingRuntimeError: null,
+          // Page-load timestamp + guarded reload: never reload within 2s of
+          // load, so a briefly-inconsistent server (error page served while a
+          // "ready" version hash is advertised over WS) cannot drive a tight
+          // reload loop. Caps recovery to one reload / 2s.
+          _loadT: Date.now(),
+          _reload() {
+            const wait = 2000 - (Date.now() - this._loadT);
+            if (wait > 0) setTimeout(() => location.reload(), wait);
+            else location.reload();
+          },
           _user: ${user ? escScript(JSON.stringify(user)) : "null"},
 
           connect() {
@@ -253,7 +263,7 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
                   // exception caught locally renders the same overlay node and would
                   // otherwise loop reload to runtime-error to reload forever.
                   if (this._buildErrorActive || (this._version && this._version !== m.hash)) {
-                    location.reload();
+                    this._reload();
                     return;
                   }
                   this._version = m.hash;
@@ -379,6 +389,16 @@ function buildErrorPage(title, error, wsPath) {
           const st = document.getElementById('__err_status');
           const pre = document.querySelector('#__error_overlay pre');
           let retries = 0;
+          // Reload guard: never reload within 2s of this page loading. If the
+          // server is briefly inconsistent (serves this error page yet
+          // advertises a "ready" version hash over WS), an unguarded reload
+          // turns into a tight loop. The guard caps it to one reload / 2s.
+          const __loadT = Date.now();
+          function __reload() {
+            const wait = 2000 - (Date.now() - __loadT);
+            if (wait > 0) { setTimeout(function(){ location.reload(); }, wait); }
+            else { location.reload(); }
+          }
           function setStatus(text, ok) {
             if (!st) return;
             st.textContent = text;
@@ -394,7 +414,7 @@ function buildErrorPage(title, error, wsPath) {
             ws.onmessage = function(e) {
               try {
                 const m = JSON.parse(e.data);
-                if (m.type === 'version' && m.hash) location.reload();
+                if (m.type === 'version' && m.hash) __reload();
                 if (m.type === 'error' && pre) pre.textContent = m.message;
               } catch(_) {}
             };
