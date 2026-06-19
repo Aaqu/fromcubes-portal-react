@@ -387,6 +387,20 @@ function serveableHash(state) {
   return state.compiled.js ? state.contentHash || "" : "";
 }
 
+/**
+ * True only when `state` holds a real, serveable build. Used by the no-op
+ * redeploy guard to decide whether a rebuild can be skipped. MUST be false
+ * after close() nulls `compiled` (`{ ...compiled: null }` teardown window),
+ * otherwise the guard treats the destroyed build as valid, skips the rebuild,
+ * and the GET route serves the holding page forever (permanent spinner).
+ *
+ * @param {?PageState} state  pageState[endpoint] (may be null/torn down).
+ * @returns {boolean}
+ */
+function hasFreshBuild(state) {
+  return !!state && !state.building && !!state.compiled && !state.compiled.error;
+}
+
 module.exports = function (RED) {
   return createHelpers(RED);
 };
@@ -398,6 +412,7 @@ module.exports.formatEsbuildError = formatEsbuildError;
 module.exports.extractPortalUser = extractPortalUser;
 module.exports.findMissingComponentRefs = findMissingComponentRefs;
 module.exports.serveableHash = serveableHash;
+module.exports.hasFreshBuild = hasFreshBuild;
 module.exports.NAME_MAX_LEN = NAME_MAX_LEN;
 module.exports.MAX_GROUPS_HEADER_BYTES = MAX_GROUPS_HEADER_BYTES;
 
@@ -619,6 +634,7 @@ function createHelpers(RED) {
     generateCSS,
     extractPortalUser,
     serveableHash,
+    hasFreshBuild,
     removeRoute,
     isSafeName,
     validateSubPath,

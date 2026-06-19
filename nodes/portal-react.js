@@ -545,6 +545,7 @@ module.exports = function (RED) {
     generateCSS,
     extractPortalUser,
     serveableHash,
+    hasFreshBuild,
     removeRoute,
     isSafeName,
     validateSubPath,
@@ -1549,8 +1550,11 @@ module.exports = function (RED) {
     );
     const prevSig = portalSig[nodeId];
     const existing = pageState[endpoint];
-    const hasValidBuild =
-      !!existing && !existing.building && !existing.compiled?.error;
+    // hasFreshBuild also requires `compiled` to be present — close() nulls it on
+    // redeploy, and a guard that ignored that (checking only building/error)
+    // would treat the destroyed build as valid and skip the rebuild, leaving the
+    // GET route serving the holding page forever. See helpers.hasFreshBuild.
+    const hasValidBuild = hasFreshBuild(existing);
     portalSig[nodeId] = sig;
 
     if (prevSig !== sig || !hasValidBuild) {
