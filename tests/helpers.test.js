@@ -7,6 +7,7 @@ const {
   quickCheckSyntax,
   findMissingComponentRefs,
   serveableHash,
+  hasFreshBuild,
 } = require("../nodes/lib/helpers");
 
 describe("validateSubPath", () => {
@@ -285,5 +286,41 @@ describe("serveableHash", () => {
 
   it("returns '' for a building placeholder (no compiled yet)", () => {
     expect(serveableHash({ building: true, contentHash: "stale" })).toBe("");
+  });
+});
+
+describe("hasFreshBuild", () => {
+  it("returns false for missing state", () => {
+    expect(hasFreshBuild(undefined)).toBe(false);
+    expect(hasFreshBuild(null)).toBe(false);
+  });
+
+  it("returns false when compiled is nulled (post-close teardown window)", () => {
+    // The regression: close() nulls compiled but keeps the state object and the
+    // portal signature. The no-op redeploy guard must NOT treat this as valid,
+    // or it skips the rebuild and the GET route serves the holding page forever.
+    expect(hasFreshBuild({ compiled: null, contentHash: "abc123" })).toBe(false);
+  });
+
+  it("returns false for a building placeholder", () => {
+    expect(hasFreshBuild({ building: true, contentHash: "stale" })).toBe(false);
+  });
+
+  it("returns false for a build error (degraded or hard)", () => {
+    expect(
+      hasFreshBuild({ compiled: { error: "boom", js: null } }),
+    ).toBe(false);
+    expect(
+      hasFreshBuild({
+        compiled: { error: "boom", js: null },
+        lastGood: { contentHash: "good99" },
+      }),
+    ).toBe(false);
+  });
+
+  it("returns true for a real serveable build", () => {
+    expect(
+      hasFreshBuild({ compiled: { error: null, js: "/*bundle*/" }, contentHash: "live42" }),
+    ).toBe(true);
   });
 });
