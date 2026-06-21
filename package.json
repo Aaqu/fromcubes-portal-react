@@ -29,14 +29,14 @@
     "node": ">=18.5"
   },
   "dependencies": {
-    "esbuild": "^0.28.0",
+    "esbuild": "^0.28.1",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "tailwindcss": "^4.2.4"
   },
   "peerDependencies": {
-    "ws": "^8.0.0 || ^9.0.0"
+    "ws": "^8.21.0"
   },
   "peerDependenciesMeta": {
     "ws": {
@@ -46,11 +46,15 @@
   "devDependencies": {
     "jsdoc": "^4.0.5",
     "jsdoc-plugin-typescript": "^3.2.1",
-    "node-red": "5.0.0-beta.6",
+    "node-red": "5.0.0",
     "node-red-node-test-helper": "^0.3.4",
     "prettier": "^3.8.3",
     "supertest": "^7.2.2",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.6",
+    "ws": "^8.21.0"
+  },
+  "overrides": {
+    "dompurify": "3.4.11"
   },
   "scripts": {
     "start": "node-red",

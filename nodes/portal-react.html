@@ -740,7 +740,12 @@
           required: true,
           validate: fcValidateName,
         },
-        compCode: { value: COMP_STARTER },
+        compCode: {
+          value: COMP_STARTER,
+          validate: function (v) {
+            return typeof v === "string" && v.trim().length > 0;
+          },
+        },
       },
       inputs: 0,
       outputs: 0,
@@ -768,7 +773,8 @@
        */
       oneditprepare: function () {
         const node = this;
-        const code = node.compCode || COMP_STARTER;
+        const code =
+          typeof node.compCode === "string" ? node.compCode : COMP_STARTER;
         console.log("[FC-Monaco] COMP oneditprepare, node.id=" + node.id);
 
         if (!window.__fcTwClasses) {
@@ -1035,7 +1041,12 @@
           required: true,
           validate: fcValidateName,
         },
-        utilCode: { value: UTIL_STARTER },
+        utilCode: {
+          value: UTIL_STARTER,
+          validate: function (v) {
+            return typeof v === "string" && v.trim().length > 0;
+          },
+        },
       },
       inputs: 0,
       outputs: 0,
@@ -1059,7 +1070,8 @@
        */
       oneditprepare: function () {
         const node = this;
-        const code = node.utilCode || UTIL_STARTER;
+        const code =
+          typeof node.utilCode === "string" ? node.utilCode : UTIL_STARTER;
         console.log("[FC-Monaco] UTIL oneditprepare, node.id=" + node.id);
 
         if (!window.__fcTwClasses) {
@@ -1275,6 +1287,19 @@ function useDebounce(value, ms = 300) {
         <label style="width:auto;">
           <input
             type="checkbox"
+            id="node-input-portalAuth"
+            style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
+          />
+          Enable Portal Auth headers
+        </label>
+        <div style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;">
+          Read <code>X-Portal-*</code> headers from reverse proxy.
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:12px;">
+        <label style="width:auto;">
+          <input
+            type="checkbox"
             id="node-input-showWsStatus"
             style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
           />
@@ -1285,19 +1310,6 @@ function useDebounce(value, ms = 300) {
           showing connection state.
         </div>
       </div>
-      <div class="form-row" style="margin-top:12px;">
-        <label style="width:auto;">
-          <input
-            type="checkbox"
-            id="node-input-portalAuth"
-            style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
-          />
-          Enable Portal Auth headers
-        </label>
-        <div style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;">
-          Read <code>X-Portal-*</code> headers from reverse proxy.
-        </div>
-      </div>
     </div>
 
     <!-- ── Tab: Head HTML ── -->
@@ -1305,7 +1317,8 @@ function useDebounce(value, ms = 300) {
       <div class="form-row">
         <div style="font-size:11px;opacity:.6;margin-bottom:6px;">
           Extra tags injected into <code>&lt;head&gt;</code>. CDN links, fonts,
-          stylesheets, meta tags.
+          stylesheets, meta tags. Trusted authors only: scripts and event
+          handlers run in the public portal page.
         </div>
         <div
           id="fc-head-wrap"
@@ -1385,7 +1398,12 @@ function useDebounce(value, ms = 300) {
         },
         endpoint: { value: "" },
         pageTitle: { value: "fromcubes" },
-        componentCode: { value: STARTER },
+        componentCode: {
+          value: STARTER,
+          validate: function (v) {
+            return typeof v === "string" && v.trim().length > 0;
+          },
+        },
         customHead: { value: "" },
         portalAuth: { value: false },
         showWsStatus: { value: false },
@@ -1423,7 +1441,8 @@ function useDebounce(value, ms = 300) {
        */
       oneditprepare: function () {
         const node = this;
-        const code = node.componentCode || STARTER;
+        const code =
+          typeof node.componentCode === "string" ? node.componentCode : STARTER;
         const headCode = node.customHead || "";
         console.log("[FC-Monaco] PORTAL oneditprepare, node.id=" + node.id);
 
@@ -2062,7 +2081,8 @@ const { data, send, user, portalClient } = useNodeRed();
   <h3>Custom Head HTML</h3>
   <p>
     Inject CDN links, fonts, or extra stylesheets into
-    <code>&lt;head&gt;</code>. Example:
+    <code>&lt;head&gt;</code>. This is raw trusted-author HTML; scripts and
+    event handlers run in the public portal page. Example:
   </p>
   <pre>
 &lt;link href="https://fonts.googleapis.com/css2?family=Inter&amp;display=swap" rel="stylesheet"&gt;</pre

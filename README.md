@@ -88,7 +88,7 @@ The opt-out is page-wide — the strictest call wins. If any component on the pa
 | Page Title | Browser tab title |
 | npm Packages | Comma-separated, e.g. `d3, three, @react-three/fiber` |
 | Portal Auth | Enable portal user header extraction (see Multi-user) |
-| Head HTML | Extra `<head>` tags (CDN, fonts, CSS) |
+| Head HTML | Extra trusted-author `<head>` tags (CDN, fonts, CSS, scripts). Runs in the public portal page. |
 | Code Editor | Monaco with JSX — must define `<App />` |
 
 There is also a config node, **fc-portal-component**, that lets you define reusable React components once and reference them by name from any portal-react node. Referenced components (and their transitive dependencies) are injected at transpile time, so unused ones add nothing to the bundle.
