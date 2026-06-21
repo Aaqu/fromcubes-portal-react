@@ -95,7 +95,6 @@
  */
 
 const crypto = require("crypto");
-const path = require("path");
 
 module.exports = function (RED) {
   // ── Admin root prefix (for correct URLs when httpAdminRoot is set) ──
@@ -559,6 +558,7 @@ module.exports = function (RED) {
     isHashInUse,
   } = helpers;
   const { buildPage, buildErrorPage } = require("./lib/page-builder");
+  const { createPortalPageHandler } = require("./lib/portal-page-route");
   const hooks = require("./lib/hooks")(RED);
   const router = require("./lib/router");
 
@@ -1583,97 +1583,19 @@ module.exports = function (RED) {
     setImmediate(() => {
       // Register route only once per endpoint (persists across deploys)
       if (!registeredRoutes[endpoint]) {
-        RED.httpNode.get(endpoint, async function (_req, res) {
-          try {
-            const state = pageState[endpoint];
-            // `!state.compiled` is the teardown window between node close
-            // (which nulls compiled) and the next rebuild. Treat it like
-            // "building" — serve the holding page (200), never fall through to
-            // `state.compiled.error` which would throw and 500 via the catch.
-            if (!state || state.building || !state.compiled) {
-              const bWsPath = state?.wsPath || wsPath;
-              res
-                .set("Cache-Control", "no-store")
-                .type("text/html")
-                .send(
-                  `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Building\u2026</title><style>@keyframes __sp{to{transform:rotate(360deg)}}body{font-family:monospace;background:#111;color:#888;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}</style></head><body><div style="font-size:24px;margin-bottom:16px">Building\u2026</div><div style="width:40px;height:40px;border:3px solid #333;border-top-color:#888;border-radius:50%;animation:__sp .8s linear infinite"></div><script>(function(){let r=0;function c(){const p=location.protocol==='https:'?'wss:':'ws:';const ws=new WebSocket(p+'//'+location.host+'${bWsPath}');ws.onmessage=function(e){try{const m=JSON.parse(e.data);if((m.type==='version'&&m.hash)||m.type==='error')location.reload();}catch(_){}};ws.onclose=function(){const d=Math.min(500*Math.pow(2,r),8000);r++;setTimeout(c,d);};ws.onerror=function(){ws.close();};}c();})()</script></body></html>`,
-                );
-              return;
-            }
-            res.set("Cache-Control", "no-store");
-            if (state.compiled.error) {
-              if (state.lastGood) {
-                // Degraded: serve previous good build, banner-only error UI.
-                const user = state.portalAuth
-                  ? extractPortalUser(_req.headers)
-                  : null;
-                res
-                  .type("text/html")
-                  .send(
-                    buildPage(
-                      state.lastGood.pageTitle,
-                      state.lastGood.compiledJs,
-                      state.wsPath,
-                      state.lastGood.customHead,
-                      state.lastGood.cssHash,
-                      user,
-                      state.showWsStatus,
-                      adminRoot,
-                    ),
-                  );
-                return;
-              }
-              res
-                .status(500)
-                .type("text/html")
-                .send(
-                  buildErrorPage(
-                    state.pageTitle,
-                    state.compiled.error,
-                    state.wsPath,
-                  ),
-                );
-              return;
-            }
-            const { cssHash } = await Promise.race([
-              state.cssReady,
-              new Promise((_, reject) =>
-                setTimeout(
-                  () => reject(new Error("CSS generation timeout")),
-                  15000,
-                ),
-              ),
-            ]);
-            const user = state.portalAuth
-              ? extractPortalUser(_req.headers)
-              : null;
-            res
-              .type("text/html")
-              .send(
-                buildPage(
-                  state.pageTitle,
-                  state.compiled.js,
-                  state.wsPath,
-                  state.customHead,
-                  cssHash,
-                  user,
-                  state.showWsStatus,
-                  adminRoot,
-                ),
-              );
-          } catch (e) {
-            res
-              .status(500)
-              .type("text/html")
-              .send(
-                buildErrorPage(
-                  pageTitle,
-                  "Page build failed: " + e.message,
-                  wsPath,
-                ),
-              );
-          }
-        });
+        RED.httpNode.get(
+          endpoint,
+          createPortalPageHandler({
+            endpoint,
+            pageState,
+            wsPath,
+            pageTitle,
+            adminRoot,
+            buildPage,
+            buildErrorPage,
+            extractPortalUser,
+          }),
+        );
         registeredRoutes[endpoint] = true;
       }
 
@@ -2042,132 +1964,19 @@ module.exports = function (RED) {
     dynamicModuleList: "libs",
   });
 
-  // ── Serve Monaco editor files locally ────────────────────────
   const express = require("express");
-  const monacoPath = path.dirname(
-    require.resolve("monaco-editor/package.json"),
-  );
-  RED.httpAdmin.use(
-    "/portal-react/vs",
-    PERM_READ,
-    express.static(path.join(monacoPath, "min", "vs")),
-  );
-
-  // ── Tailwind class list endpoint ────────────────────────────
-  const { generateCandidates } = require("./tw-candidates");
-  let twClassesCache = null;
-  RED.httpAdmin.get("/portal-react/tw-classes", PERM_READ, (_req, res) => {
-    if (!twClassesCache) {
-      twClassesCache = generateCandidates();
-    }
-    res.json(twClassesCache);
-  });
-
-  // ── Vendor CSS endpoint (per page, looked up from pageState) ─────────
-  // Public (httpNode) — served to browsers loading the portal page, not the
-  // editor. Hash is constrained to short hex so a hostile client cannot probe
-  // for arbitrary pageState keys.
-  const CSS_HASH_RE = /^[a-f0-9]{1,64}$/;
-  RED.httpNode.get("/fromcubes/css/:hash.css", (req, res) => {
-    const reqHash = req.params.hash;
-    if (!CSS_HASH_RE.test(reqHash)) {
-      res.status(400).send("Bad request");
-      return;
-    }
-    let css = null;
-    for (const ep in pageState) {
-      if (pageState[ep]?.cssHash === reqHash) {
-        css = pageState[ep].css;
-        break;
-      }
-    }
-    if (!css) {
-      res.status(404).send("Not found");
-      return;
-    }
-    res.set({
-      "Content-Type": "text/css",
-      "Cache-Control": "public, max-age=31536000, immutable",
-    });
-    res.send(css);
-  });
-  // Back-compat: legacy admin URL still works (page-builder may emit it for
-  // existing builds). Apply the same hash whitelist.
-  RED.httpAdmin.get("/portal-react/css/:hash.css", (req, res) => {
-    const reqHash = req.params.hash;
-    if (!CSS_HASH_RE.test(reqHash)) {
-      res.status(400).send("Bad request");
-      return;
-    }
-    let css = null;
-    for (const ep in pageState) {
-      if (pageState[ep]?.cssHash === reqHash) {
-        css = pageState[ep].css;
-        break;
-      }
-    }
-    if (!css) {
-      res.status(404).send("Not found");
-      return;
-    }
-    res.set({
-      "Content-Type": "text/css",
-      "Cache-Control": "public, max-age=31536000, immutable",
-    });
-    res.send(css);
-  });
-
-  // ── Public assets folder ─────────────────────────────────────
-  const { registerAssets } = require("./lib/assets");
-  registerAssets(RED, express, path.join(userDir, "fromcubes", "public"), {
+  const { registerAdminApi } = require("./lib/admin-api");
+  registerAdminApi(RED, {
+    express,
+    permRead: PERM_READ,
+    permWrite: PERM_WRITE,
     csrfGuard,
     rateLimit,
-    jsonLimit: JSON_BODY_LIMIT,
-  });
-
-  // ── Admin API for component registry ──────────────────────────
-
-  RED.httpAdmin.get("/portal-react/registry", PERM_READ, (_req, res) => {
-    res.json(registry);
-  });
-
-  RED.httpAdmin.post("/portal-react/registry", PERM_WRITE, csrfGuard, rateLimit, express.json({ limit: JSON_BODY_LIMIT }), (req, res) => {
-    res.status(410).json({
-      error: "registry writes are deprecated; use fc-portal-component nodes",
-    });
-  });
-
-  RED.httpAdmin.delete("/portal-react/registry/:name", PERM_WRITE, csrfGuard, rateLimit, (req, res) => {
-    res.status(410).json({
-      error: "registry writes are deprecated; use fc-portal-component nodes",
-    });
-  });
-
-  // ── Admin API for utility registry ────────────────────────────
-
-  RED.httpAdmin.get("/portal-react/utilities", PERM_READ, (_req, res) => {
-    // Include parsed top-level symbols so the editor "Utilities" dialog can
-    // list which identifiers each node exports.
-    const out = {};
-    for (const [name, u] of Object.entries(utilities)) {
-      out[name] = {
-        code: u.code,
-        error: u.error || null,
-        symbols: [...extractUtilitySymbols(u.code || "")],
-      };
-    }
-    res.json(out);
-  });
-
-  RED.httpAdmin.post("/portal-react/utilities", PERM_WRITE, csrfGuard, rateLimit, express.json({ limit: JSON_BODY_LIMIT }), (req, res) => {
-    res.status(410).json({
-      error: "utility writes are deprecated; use fc-portal-utility nodes",
-    });
-  });
-
-  RED.httpAdmin.delete("/portal-react/utilities/:name", PERM_WRITE, csrfGuard, rateLimit, (req, res) => {
-    res.status(410).json({
-      error: "utility writes are deprecated; use fc-portal-utility nodes",
-    });
+    jsonBodyLimit: JSON_BODY_LIMIT,
+    userDir,
+    pageState,
+    registry,
+    utilities,
+    extractUtilitySymbols,
   });
 };
