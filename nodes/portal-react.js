@@ -952,6 +952,7 @@ module.exports = function (RED) {
         let base;
         if (st.errorKind === "missing-component") base = "missing: " + st.errorSource;
         else if (st.errorSource) base = "broken: " + st.errorSource;
+        else if (st.errorKind === "missing-app") base = "no App";
         else if (st.errorKind === "missing-return") base = "no return";
         else if (st.errorKind === "rebuild") base = "rebuild err";
         else base = "transpile err";
@@ -1286,9 +1287,16 @@ module.exports = function (RED) {
           }
         }
 
-        // ── Check: missing return in App ──
+        // ── Check: App definition + missing return ──
+        const hasAppDefinition =
+          /\b(?:export\s+default\s+)?function\s+App\s*\(/.test(cleanCompCode) ||
+          /\bclass\s+App\b/.test(cleanCompCode) ||
+          /\b(?:const|let|var)\s+App\s*=/.test(cleanCompCode);
+
         let missingReturn = false;
-        const appFnMatch = cleanCompCode.match(/function\s+App\s*\([^)]*\)\s*\{/);
+        const appFnMatch = cleanCompCode.match(
+          /(?:export\s+default\s+)?function\s+App\s*\([^)]*\)\s*\{/,
+        );
         if (appFnMatch) {
           let depth = 1, i = appFnMatch.index + appFnMatch[0].length;
           let hasReturn = false;
@@ -1305,7 +1313,7 @@ module.exports = function (RED) {
         // ── Resolve compiled (success or unified error) ──
         let compiled;
         let cacheHit = false;
-        let errorKind = null; // 'component' | 'utility' | 'missing-component' | 'missing-return' | 'transpile'
+        let errorKind = null; // 'component' | 'utility' | 'missing-component' | 'missing-app' | 'missing-return' | 'transpile'
         if (missingComps) {
           const list = missingComps.join(", ");
           const plural = missingComps.length > 1;
@@ -1332,6 +1340,13 @@ module.exports = function (RED) {
             error: `${label} "${errorSource}" has a syntax error:\n\n${srcErr}`,
           };
           errorKind = errorSourceKind;
+        } else if (!hasAppDefinition) {
+          compiled = {
+            js: null,
+            error:
+              "App component is required.\n\nAdd a top-level App component, e.g.:\n\nfunction App() {\n  return <div>Hello</div>\n}",
+          };
+          errorKind = "missing-app";
         } else if (missingReturn) {
           compiled = {
             js: null,
@@ -1359,6 +1374,8 @@ module.exports = function (RED) {
               ? `Component "${errorSource}" syntax error: `
               : errorKind === "utility"
               ? `Utility "${errorSource}" syntax error: `
+              : errorKind === "missing-app"
+              ? "App component is required: "
               : errorKind === "missing-return"
               ? "App component has no return statement: "
               : "JSX transpile error: ") + compiled.error,
@@ -2115,28 +2132,15 @@ module.exports = function (RED) {
   });
 
   RED.httpAdmin.post("/portal-react/registry", PERM_WRITE, csrfGuard, rateLimit, express.json({ limit: JSON_BODY_LIMIT }), (req, res) => {
-    const { name, code } = req.body || {};
-    if (!isSafeName(name))
-      return res.status(400).json({ error: "invalid name" });
-    const newCode = code || "";
-    const prevCode = registry[name]?.code;
-    registry[name] = { code: newCode };
-    if (prevCode !== newCode) {
-      scheduleRebuildUsing(name);
-    }
-    res.json({ ok: true });
+    res.status(410).json({
+      error: "registry writes are deprecated; use fc-portal-component nodes",
+    });
   });
 
   RED.httpAdmin.delete("/portal-react/registry/:name", PERM_WRITE, csrfGuard, rateLimit, (req, res) => {
-    const name = req.params.name;
-    if (!isSafeName(name))
-      return res.status(400).json({ error: "invalid name" });
-    const existed = Object.prototype.hasOwnProperty.call(registry, name);
-    delete registry[name];
-    if (existed) {
-      scheduleRebuildUsing(name);
-    }
-    res.json({ ok: true });
+    res.status(410).json({
+      error: "registry writes are deprecated; use fc-portal-component nodes",
+    });
   });
 
   // ── Admin API for utility registry ────────────────────────────
@@ -2156,67 +2160,14 @@ module.exports = function (RED) {
   });
 
   RED.httpAdmin.post("/portal-react/utilities", PERM_WRITE, csrfGuard, rateLimit, express.json({ limit: JSON_BODY_LIMIT }), (req, res) => {
-    const { name, code } = req.body || {};
-    if (!isSafeName(name))
-      return res.status(400).json({ error: "invalid name" });
-    const newCode = code || "";
-    const prevCode = utilities[name]?.code;
-    const prevSyms = extractUtilitySymbols(prevCode || "");
-    const newSyms = extractUtilitySymbols(newCode);
-
-    // Free previously-owned symbols before conflict check (mirror node ctor)
-    for (const s of prevSyms) {
-      if (utilSymbolOwners[s] === name) delete utilSymbolOwners[s];
-    }
-
-    const conflicts = [];
-    for (const s of newSyms) {
-      if (Object.prototype.hasOwnProperty.call(registry, s)) {
-        conflicts.push(`${s} (component)`);
-        continue;
-      }
-      const symOwner = utilSymbolOwners[s];
-      if (symOwner && symOwner !== name) {
-        conflicts.push(`${s} (utility ${symOwner})`);
-      }
-    }
-
-    const syntaxErr = quickCheckSyntax(newCode);
-    const dupErr =
-      conflicts.length > 0
-        ? "duplicate symbols: " + conflicts.join(", ")
-        : null;
-    const combinedErr = syntaxErr || dupErr;
-
-    utilities[name] = { code: newCode, error: combinedErr };
-
-    if (!combinedErr) {
-      for (const s of newSyms) utilSymbolOwners[s] = name;
-    }
-
-    if (prevCode !== newCode) {
-      scheduleRebuildUsing(name);
-      for (const s of newSyms) scheduleRebuildUsing(s);
-      for (const s of prevSyms) if (!newSyms.has(s)) scheduleRebuildUsing(s);
-    }
-    res.json({ ok: true, error: combinedErr || null });
+    res.status(410).json({
+      error: "utility writes are deprecated; use fc-portal-utility nodes",
+    });
   });
 
   RED.httpAdmin.delete("/portal-react/utilities/:name", PERM_WRITE, csrfGuard, rateLimit, (req, res) => {
-    const name = req.params.name;
-    if (!isSafeName(name))
-      return res.status(400).json({ error: "invalid name" });
-    const prev = utilities[name];
-    delete utilities[name];
-    // Release all symbols owned by this utility
-    for (const s of Object.keys(utilSymbolOwners)) {
-      if (utilSymbolOwners[s] === name) delete utilSymbolOwners[s];
-    }
-    if (prev) {
-      const removedSyms = extractUtilitySymbols(prev.code || "");
-      scheduleRebuildUsing(name);
-      for (const s of removedSyms) scheduleRebuildUsing(s);
-    }
-    res.json({ ok: true });
+    res.status(410).json({
+      error: "utility writes are deprecated; use fc-portal-utility nodes",
+    });
   });
 };

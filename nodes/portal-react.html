@@ -1317,7 +1317,8 @@ function useDebounce(value, ms = 300) {
       <div class="form-row">
         <div style="font-size:11px;opacity:.6;margin-bottom:6px;">
           Extra tags injected into <code>&lt;head&gt;</code>. CDN links, fonts,
-          stylesheets, meta tags.
+          stylesheets, meta tags. Trusted authors only: scripts and event
+          handlers run in the public portal page.
         </div>
         <div
           id="fc-head-wrap"
@@ -2080,7 +2081,8 @@ const { data, send, user, portalClient } = useNodeRed();
   <h3>Custom Head HTML</h3>
   <p>
     Inject CDN links, fonts, or extra stylesheets into
-    <code>&lt;head&gt;</code>. Example:
+    <code>&lt;head&gt;</code>. This is raw trusted-author HTML; scripts and
+    event handlers run in the public portal page. Example:
   </p>
   <pre>
 &lt;link href="https://fonts.googleapis.com/css2?family=Inter&amp;display=swap" rel="stylesheet"&gt;</pre
