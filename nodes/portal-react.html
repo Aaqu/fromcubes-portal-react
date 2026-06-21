@@ -740,7 +740,12 @@
           required: true,
           validate: fcValidateName,
         },
-        compCode: { value: COMP_STARTER },
+        compCode: {
+          value: COMP_STARTER,
+          validate: function (v) {
+            return typeof v === "string" && v.trim().length > 0;
+          },
+        },
       },
       inputs: 0,
       outputs: 0,
@@ -768,7 +773,8 @@
        */
       oneditprepare: function () {
         const node = this;
-        const code = node.compCode || COMP_STARTER;
+        const code =
+          typeof node.compCode === "string" ? node.compCode : COMP_STARTER;
         console.log("[FC-Monaco] COMP oneditprepare, node.id=" + node.id);
 
         if (!window.__fcTwClasses) {
@@ -1035,7 +1041,12 @@
           required: true,
           validate: fcValidateName,
         },
-        utilCode: { value: UTIL_STARTER },
+        utilCode: {
+          value: UTIL_STARTER,
+          validate: function (v) {
+            return typeof v === "string" && v.trim().length > 0;
+          },
+        },
       },
       inputs: 0,
       outputs: 0,
@@ -1059,7 +1070,8 @@
        */
       oneditprepare: function () {
         const node = this;
-        const code = node.utilCode || UTIL_STARTER;
+        const code =
+          typeof node.utilCode === "string" ? node.utilCode : UTIL_STARTER;
         console.log("[FC-Monaco] UTIL oneditprepare, node.id=" + node.id);
 
         if (!window.__fcTwClasses) {
@@ -1385,7 +1397,12 @@ function useDebounce(value, ms = 300) {
         },
         endpoint: { value: "" },
         pageTitle: { value: "fromcubes" },
-        componentCode: { value: STARTER },
+        componentCode: {
+          value: STARTER,
+          validate: function (v) {
+            return typeof v === "string" && v.trim().length > 0;
+          },
+        },
         customHead: { value: "" },
         portalAuth: { value: false },
         showWsStatus: { value: false },
@@ -1423,7 +1440,8 @@ function useDebounce(value, ms = 300) {
        */
       oneditprepare: function () {
         const node = this;
-        const code = node.componentCode || STARTER;
+        const code =
+          typeof node.componentCode === "string" ? node.componentCode : STARTER;
         const headCode = node.customHead || "";
         console.log("[FC-Monaco] PORTAL oneditprepare, node.id=" + node.id);
 
