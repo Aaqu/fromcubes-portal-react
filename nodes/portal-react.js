@@ -95,6 +95,9 @@
  */
 
 const crypto = require("crypto");
+const packageInfo = require("../package.json");
+
+const CACHE_SCHEMA_VERSION = "portal-react-cache-v2";
 
 module.exports = function (RED) {
   // ── Admin root prefix (for correct URLs when httpAdminRoot is set) ──
@@ -943,7 +946,9 @@ module.exports = function (RED) {
           "createRoot(document.getElementById('root')).render(React.createElement(App));",
         ].join("\n");
 
-        const jsxHash = hash(fullJsx);
+        const jsxHash = hash(
+          [CACHE_SCHEMA_VERSION, packageInfo.version, fullJsx].join("\0"),
+        );
 
         // ── Check: any used component or utility has its own syntax error ──
         let errorSource = null;
