@@ -1287,6 +1287,19 @@ function useDebounce(value, ms = 300) {
         <label style="width:auto;">
           <input
             type="checkbox"
+            id="node-input-portalAuth"
+            style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
+          />
+          Enable Portal Auth headers
+        </label>
+        <div style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;">
+          Read <code>X-Portal-*</code> headers from reverse proxy.
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:12px;">
+        <label style="width:auto;">
+          <input
+            type="checkbox"
             id="node-input-showWsStatus"
             style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
           />
@@ -1295,19 +1308,6 @@ function useDebounce(value, ms = 300) {
         <div style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;">
           Displays a small <em>fromcubes</em> badge in the bottom-right corner
           showing connection state.
-        </div>
-      </div>
-      <div class="form-row" style="margin-top:12px;">
-        <label style="width:auto;">
-          <input
-            type="checkbox"
-            id="node-input-portalAuth"
-            style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
-          />
-          Enable Portal Auth headers
-        </label>
-        <div style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;">
-          Read <code>X-Portal-*</code> headers from reverse proxy.
         </div>
       </div>
     </div>
