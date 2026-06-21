@@ -328,85 +328,13 @@ module.exports = function (RED) {
   }
   const portalSig = RED.settings.portalReactSig;
 
-  /**
-   * Shared WebSocket heartbeat tick.
-   *
-   * Replaces the previous per-client `setInterval(ping, 30 s)` pattern: with
-   * N connected browsers the old code held N intervals; this module-level
-   * tick walks every registered `WebSocket.Server` once every 30 s and pings
-   * every alive client. Result: 1 interval regardless of fan-out.
-   *
-   * The tick auto-starts when the first portal node registers its
-   * `WebSocket.Server` via `registerPingedServer()` and clears itself when
-   * the last server unregisters. `unref()` ensures it never blocks process
-   * exit.
-   *
-   * @description N→1 interval count; bounded liveness latency 30 s.
-   * @private
-   */
-  const PING_INTERVAL_MS = 30_000;
-  if (!RED.settings.portalReactPingedServers) {
-    RED.settings.portalReactPingedServers = new Set();
-  }
-  const pingedServers = RED.settings.portalReactPingedServers;
-
-  if (!RED.settings.portalReactPingTick) {
-    RED.settings.portalReactPingTick = { iv: null };
-  }
-  const pingTick = RED.settings.portalReactPingTick;
-
-  /**
-   * Single tick of the WS keep-alive sweep. For each registered ws.Server, drop
-   * sockets whose previous ping went unanswered (they are dead) and ping the
-   * survivors. The pong handler resets `_isAlive` back to true. Runs on a
-   * shared interval so multiple portals share one timer.
-   *
-   * @returns {void}
-   * @private
-   */
-  function _pingSweep() {
-    for (const srv of pingedServers) {
-      try {
-        srv.clients.forEach((ws) => {
-          if (ws._isAlive === false) {
-            try { ws.terminate(); } catch (e) { RED.log.trace("[portal-react] ws terminate: " + e.message); }
-            return;
-          }
-          ws._isAlive = false;
-          try { ws.ping(); } catch (e) { RED.log.trace("[portal-react] ws ping: " + e.message); }
-        });
-      } catch (e) {
-        RED.log.trace("[portal-react] ping sweep: " + e.message);
-      }
-    }
-  }
-
-  /**
-   * Add a `WebSocket.Server` to the shared ping-tick rotation. Idempotent.
-   * Starts the global interval the first time the set is non-empty.
-   * @param {WebSocket.Server} wsServer
-   */
-  function registerPingedServer(wsServer) {
-    if (pingedServers.has(wsServer)) return;
-    pingedServers.add(wsServer);
-    if (!pingTick.iv) {
-      pingTick.iv = setInterval(_pingSweep, PING_INTERVAL_MS);
-      pingTick.iv.unref?.();
-    }
-  }
-
-  /**
-   * Remove a `WebSocket.Server` from the shared rotation. Clears the
-   * interval automatically when the last server unregisters.
-   * @param {WebSocket.Server} wsServer
-   */
-  function unregisterPingedServer(wsServer) {
-    if (!pingedServers.delete(wsServer)) return;
-    if (pingedServers.size === 0 && pingTick.iv) {
-      clearInterval(pingTick.iv);
-      pingTick.iv = null;
-    }
-  }
+  const {
+    createWsHeartbeat,
+  } = require("./lib/ws-heartbeat");
+  const {
+    registerPingedServer,
+    unregisterPingedServer,
+  } = createWsHeartbeat(RED);
 
   // Debounced selective rebuild: coalesces multiple component changes into one pass.
   // Yields event loop between builds so HTTP server stays responsive.
@@ -559,6 +487,10 @@ module.exports = function (RED) {
   } = helpers;
   const { buildPage, buildErrorPage } = require("./lib/page-builder");
   const { createPortalPageHandler } = require("./lib/portal-page-route");
+  const {
+    extractUtilitySymbols,
+    registerRegistryNodes,
+  } = require("./lib/registry-nodes");
   const hooks = require("./lib/hooks")(RED);
   const router = require("./lib/router");
 
@@ -568,270 +500,16 @@ module.exports = function (RED) {
   // `recovery` WS frame so React can opt out via useNodeRed({ ignoreRecovery: true }).
   const lastBroadcastCache = new Map();
 
-  // ── Canvas node: shared component ─────────────────────────────
-
-  /**
-   * Canvas node that registers a named React component into the shared
-   * component registry. One node = one named identifier; multiple
-   * components require multiple `fc-portal-component` nodes.
-   *
-   * Constructor side-effects:
-   *   - validates `compName` (JS identifier + length + prototype blacklist)
-   *   - checks duplicates against the cross-namespace owner table
-   *   - syntax-checks the JSX via `quickCheckSyntax`
-   *   - schedules a selective rebuild of every portal that references this name
-   *
-   * @param {ComponentNodeConfig} config
-   * @returns {void}
-   * @fires Node-RED#close  via node.on("close", …) — removes registration on disable / delete.
-   * @private
-   */
-  function PortalComponentNode(config) {
-    RED.nodes.createNode(this, config);
-    const node = this;
-    const compName = (config.compName || "").trim();
-
-    if (!isSafeName(compName)) {
-      node.error("Invalid component name: " + compName);
-      node.status({ fill: "red", shape: "dot", text: "invalid name" });
-      return;
-    }
-
-    // Duplicate component name check
-    const existingOwner = compNameOwners[compName];
-    if (existingOwner && existingOwner !== node.id) {
-      node.error(
-        `Component name "${compName}" is already used by another node`,
-      );
-      node.status({
-        fill: "red",
-        shape: "ring",
-        text: shortStatus("dup: " + compName),
-      });
-      node.on("close", function (_removed, done) {
-        done();
-      });
-      return;
-    }
-
-    // Cross-namespace collision: compName matches an existing utility's
-    // internal top-level symbol → bundle would have two declarations of the
-    // same identifier (component IIFE + utility raw decl).
-    const utilSymOwner = utilSymbolOwners[compName];
-    if (utilSymOwner) {
-      node.error(
-        `Component name "${compName}" conflicts with a top-level symbol declared in utility "${utilSymOwner}"`,
-      );
-      node.status({
-        fill: "red",
-        shape: "ring",
-        text: shortStatus("dup sym: " + compName),
-      });
-      node.on("close", function (_removed, done) {
-        done();
-      });
-      return;
-    }
-    compNameOwners[compName] = node.id;
-
-    const newCode = config.compCode || "";
-    const prevCode = registry[compName]?.code;
-    const syntaxErr = quickCheckSyntax(newCode);
-    registry[compName] = { code: newCode, error: syntaxErr };
-
-    if (syntaxErr) {
-      node.error(`Component "${compName}" syntax error: ${syntaxErr}`);
-      const short = syntaxErr.split("\n")[0];
-      node.status({ fill: "red", shape: "dot", text: shortStatus("syntax: " + short) });
-    } else {
-      node.status({ fill: "green", shape: "dot", text: shortStatus(compName) });
-    }
-
-    // Only rebuild portals that reference this component, and only if the code actually changed.
-    if (prevCode !== newCode) {
-      scheduleRebuildUsing(compName);
-    }
-
-    node.on("close", function (removed, done) {
-      if (compNameOwners[compName] === node.id) {
-        delete compNameOwners[compName];
-      }
-      delete registry[compName];
-      // Portals depending on this component must rebuild (topology changed or name resolution breaks).
-      scheduleRebuildUsing(compName);
-      done();
-    });
-  }
-  RED.nodes.registerType("fc-portal-component", PortalComponentNode);
-
-  // ── Canvas node: shared utility (helpers / hooks / constants) ─
-
-  // Parse top-level symbols from utility code: function/const/let/class declarations.
-  // Used for selective inclusion (does user JSX reference any of these symbols?)
-  // and for the editor "Utilities" dialog (lists exported identifiers per node).
-  // Code is rejected silently when oversize so the regex cannot be weaponized
-  // (ReDoS) by feeding multi-MB code into a sticky regex with `\s+` runs.
-  const MAX_UTIL_CODE_BYTES = 1_000_000;
-  /**
-   * Scan utility code for top-level `function`/`const`/`let`/`var`/`class`
-   * names. Used to populate the symbol-ownership table (collision checks)
-   * and the editor's Utilities dialog. Oversize input is rejected silently
-   * (ReDoS guard — the regex has multiple `\s+` runs that could regress
-   * to near-linear on multi-MB payloads).
-   *
-   * @param {string} code
-   * @returns {Set<string>}  set of declared top-level identifiers
-   * @example
-   *   extractUtilitySymbols("const PI = 3.14;\nfunction add(a,b) { return a+b }");
-   *   // → Set(2) { "PI", "add" }
-   */
-  function extractUtilitySymbols(code) {
-    const names = new Set();
-    if (!code || code.length > MAX_UTIL_CODE_BYTES) return names;
-    const re = /^(?:export\s+)?(?:async\s+)?(?:function\s*\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm;
-    let m;
-    while ((m = re.exec(code))) names.add(m[1]);
-    return names;
-  }
-
-  /**
-   * Canvas node that contributes raw top-level JavaScript (helpers / custom
-   * hooks / constants) to the bundle. Unlike `fc-portal-component`, the code
-   * is injected *without* an IIFE wrapper — one node can declare many
-   * top-level symbols. Each symbol is registered with the cross-namespace
-   * owner table so identifiers don't collide with component names or other
-   * utility nodes.
-   *
-   * @param {UtilityNodeConfig} config
-   * @returns {void}
-   * @fires Node-RED#close  on disable / delete — frees registry + owned symbols.
-   * @private
-   */
-  function PortalUtilityNode(config) {
-    RED.nodes.createNode(this, config);
-    const node = this;
-    const utilName = (config.utilName || "").trim();
-
-    if (!isSafeName(utilName)) {
-      node.error("Invalid utility name: " + utilName);
-      node.status({ fill: "red", shape: "dot", text: "invalid name" });
-      return;
-    }
-
-    // Duplicate name check across components AND utilities (shared namespace)
-    const existingOwner = compNameOwners[utilName];
-    if (existingOwner && existingOwner !== node.id) {
-      node.error(
-        `Name "${utilName}" is already used by another component or utility`,
-      );
-      node.status({
-        fill: "red",
-        shape: "ring",
-        text: shortStatus("dup: " + utilName),
-      });
-      node.on("close", function (_removed, done) {
-        done();
-      });
-      return;
-    }
-    compNameOwners[utilName] = node.id;
-
-    const newCode = config.utilCode || "";
-    const prevCode = utilities[utilName]?.code;
-    const prevSyms = extractUtilitySymbols(prevCode || "");
-    const newSyms = extractUtilitySymbols(newCode);
-
-    // Free this node's previously-registered symbols before checking new ones,
-    // so a redeploy that simply renames an internal symbol doesn't see itself
-    // as a collision.
-    for (const s of prevSyms) {
-      if (utilSymbolOwners[s] === utilName) delete utilSymbolOwners[s];
-    }
-
-    // Cross-namespace symbol collision check:
-    //  - vs component names (a component declares `const Name = (() => ...)();`
-    //    at top level — a utility-internal `function Name` would clash)
-    //  - vs other utility nodes' internal symbols (raw top-level decls clash)
-    const conflicts = [];
-    for (const s of newSyms) {
-      if (Object.prototype.hasOwnProperty.call(registry, s)) {
-        conflicts.push(`${s} (component)`);
-        continue;
-      }
-      const symOwner = utilSymbolOwners[s];
-      if (symOwner && symOwner !== utilName) {
-        conflicts.push(`${s} (utility ${symOwner})`);
-      }
-    }
-
-    const syntaxErr = quickCheckSyntax(newCode);
-    const dupErr =
-      conflicts.length > 0
-        ? "duplicate symbols: " + conflicts.join(", ")
-        : null;
-    // Syntax error takes precedence (most actionable). If both, both are
-    // surfaced in the node.error message but status text shows syntax.
-    const combinedErr = syntaxErr || dupErr;
-
-    utilities[utilName] = { code: newCode, error: combinedErr };
-
-    if (combinedErr) {
-      const msgs = [syntaxErr, dupErr].filter(Boolean).join(" | ");
-      node.error(`Utility "${utilName}": ${msgs}`);
-      if (syntaxErr) {
-        const short = syntaxErr.split("\n")[0];
-        node.status({ fill: "red", shape: "dot", text: shortStatus("syntax: " + short) });
-      } else {
-        const firstSym = conflicts[0].split(" ")[0];
-        node.status({
-          fill: "red",
-          shape: "ring",
-          text: shortStatus("dup sym: " + firstSym),
-        });
-      }
-      // Don't register symbols on conflict — leave the namespace clean for
-      // whichever node actually owns them. Dependent portals will surface
-      // "broken: <utilName>" via the standard utility-error path.
-    } else {
-      // Register all new symbols as owned by this utility node
-      for (const s of newSyms) utilSymbolOwners[s] = utilName;
-      node.status({
-        fill: "green",
-        shape: "dot",
-        text: shortStatus(utilName),
-      });
-    }
-
-    // Trigger rebuild of portals using this utility (any of its inner symbols).
-    // Push BOTH the node-level utilName AND each top-level symbol into the
-    // dirty set so portals matching by either are caught by selective rebuild.
-    if (prevCode !== newCode) {
-      scheduleRebuildUsing(utilName);
-      for (const s of newSyms) scheduleRebuildUsing(s);
-      // Symbols removed in this edit must also force rebuild for portals that
-      // referenced them — those portals will fail to find the symbol and need
-      // to surface an error or recompile against the new utility code.
-      for (const s of prevSyms) if (!newSyms.has(s)) scheduleRebuildUsing(s);
-    }
-
-    node.on("close", function (removed, done) {
-      if (compNameOwners[utilName] === node.id) {
-        delete compNameOwners[utilName];
-      }
-      // Remove all symbols this node currently owns (none if it errored out
-      // on dup-check, all of newSyms otherwise — driven by the registration
-      // table, not by re-parsing the code).
-      for (const s of Object.keys(utilSymbolOwners)) {
-        if (utilSymbolOwners[s] === utilName) delete utilSymbolOwners[s];
-      }
-      const removedSyms = extractUtilitySymbols(utilities[utilName]?.code || "");
-      delete utilities[utilName];
-      scheduleRebuildUsing(utilName);
-      for (const s of removedSyms) scheduleRebuildUsing(s);
-      done();
-    });
-  }
-  RED.nodes.registerType("fc-portal-utility", PortalUtilityNode);
+  registerRegistryNodes(RED, {
+    registry,
+    utilities,
+    compNameOwners,
+    utilSymbolOwners,
+    isSafeName,
+    quickCheckSyntax,
+    shortStatus,
+    scheduleRebuildUsing,
+  });
 
   // ── Main node: portal-react ───────────────────────────────────
 
