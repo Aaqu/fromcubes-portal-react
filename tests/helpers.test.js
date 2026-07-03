@@ -8,7 +8,9 @@ const {
   findMissingComponentRefs,
   serveableHash,
   hasFreshBuild,
+  identifierRe,
 } = require("../nodes/lib/helpers");
+const { extractUtilitySymbols } = require("../nodes/lib/registry-nodes");
 
 describe("validateSubPath", () => {
   it("accepts a simple single segment", () => {
@@ -322,5 +324,61 @@ describe("hasFreshBuild", () => {
     expect(
       hasFreshBuild({ compiled: { error: null, js: "/*bundle*/" }, contentHash: "live42" }),
     ).toBe(true);
+  });
+});
+
+describe("identifierRe", () => {
+  it("matches a standalone identifier", () => {
+    expect(identifierRe("Button").test("<Button/>")).toBe(true);
+    expect(identifierRe("Button").test("return Button;")).toBe(true);
+  });
+
+  it("does not match as prefix/suffix of a longer identifier", () => {
+    expect(identifierRe("Button").test("ButtonGroup")).toBe(false);
+    expect(identifierRe("Button").test("MyButton")).toBe(false);
+    expect(identifierRe("Button").test("_Button")).toBe(false);
+  });
+
+  it("handles $-edged identifiers that \\b misses", () => {
+    expect(identifierRe("$fmt").test("call($fmt)")).toBe(true);
+    expect(identifierRe("$fmt").test("x$fmt")).toBe(false);
+    expect(identifierRe("fmt$").test("fmt$(x)")).toBe(true);
+    expect(identifierRe("fmt$").test("fmt$x")).toBe(false);
+  });
+
+  it("returns the same cached RegExp instance for the same name", () => {
+    expect(identifierRe("Stat")).toBe(identifierRe("Stat"));
+  });
+});
+
+describe("extractUtilitySymbols", () => {
+  it("extracts function/const/let/var/class names", () => {
+    const syms = extractUtilitySymbols(
+      "function go() {}\nconst A = 1;\nlet b = 2;\nvar c = 3;\nclass Foo {}",
+    );
+    expect([...syms].sort()).toEqual(["A", "Foo", "b", "c", "go"]);
+  });
+
+  it("extracts every name from multi-declarator statements", () => {
+    expect([...extractUtilitySymbols("const a = 1, b = 2;")].sort()).toEqual(["a", "b"]);
+    expect([...extractUtilitySymbols("let x, y;")].sort()).toEqual(["x", "y"]);
+  });
+
+  it("ignores commas inside initializer expressions and strings", () => {
+    const syms = extractUtilitySymbols(
+      'const a = f(1, 2), b = [3, 4], c = { x: 1, y: 2 }, d = "p,q";',
+    );
+    expect([...syms].sort()).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("does not leak arrow params or function-inner declarations", () => {
+    const syms = extractUtilitySymbols(
+      "const fn = (p, q) => p + q;\nfunction go() { const inner = 1, hidden = 2; }",
+    );
+    expect([...syms].sort()).toEqual(["fn", "go"]);
+  });
+
+  it("returns empty for oversized input (ReDoS guard)", () => {
+    expect(extractUtilitySymbols("const a = 1;".repeat(200000)).size).toBe(0);
   });
 });
