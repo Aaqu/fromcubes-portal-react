@@ -290,6 +290,16 @@ module.exports = function (RED) {
   }
   const endpointOwners = RED.settings.portalReactEndpointOwners;
 
+  // Track the endpoint each portal node currently serves: { nodeId: endpoint }.
+  // A sub-path change arrives as a plain redeploy (close(removed=false)), which
+  // intentionally keeps routes and pageState alive — without this map the old
+  // URL would keep serving the holding page forever. The constructor compares
+  // against this map and tears down the previous endpoint on mismatch.
+  if (!RED.settings.portalReactNodeEndpoints) {
+    RED.settings.portalReactNodeEndpoints = {};
+  }
+  const nodeEndpoints = RED.settings.portalReactNodeEndpoints;
+
   // Track component name ownership: { compName: nodeId } — prevents duplicate component names
   // Shared namespace with fc-portal-utility nodes so a component and a utility
   // can never share the same name.
@@ -440,7 +450,9 @@ module.exports = function (RED) {
           if (
             (usedComps && usedComps.has(name)) ||
             (usedUtils && usedUtils.has(name)) ||
-            raw.includes(name)
+            // Identifier-boundary match, not substring — a dirty `Button`
+            // must not rebuild portals that only use `ButtonGroup`.
+            identifierRe(name).test(raw)
           ) {
             targetIds.add(nodeId);
             break;
@@ -452,14 +464,15 @@ module.exports = function (RED) {
     const fns = [...targetIds].map((id) => rebuildCallbacks[id]).filter(Boolean);
     let i = 0;
     /**
-     * Trampoline over the rebuild list — yields to the event loop between
+     * Trampoline over the rebuild list — awaits each (async) rebuild so
+     * builds run sequentially, and yields to the event loop between
      * iterations so a heavy queue does not block the HTTP server.
-     * @returns {void}
+     * @returns {Promise<void>}
      * @private
      */
-    function next() {
+    async function next() {
       if (i >= fns.length) return;
-      try { fns[i](); } catch (e) { RED.log.error("[portal-react] rebuild failed: " + e.message); }
+      try { await fns[i](); } catch (e) { RED.log.error("[portal-react] rebuild failed: " + e.message); }
       i++;
       if (i < fns.length) setImmediate(next);
     }
@@ -480,6 +493,7 @@ module.exports = function (RED) {
     isSafeName,
     validateSubPath,
     findMissingComponentRefs,
+    identifierRe,
     userDir,
     readCachedJS,
     writeCachedJS,
@@ -597,6 +611,25 @@ module.exports = function (RED) {
     }
     endpointOwners[endpoint] = nodeId;
 
+    // ── Sub-path changed on redeploy → tear down the previous endpoint ──
+    // Route, pageState, cache and recovery entries of the old URL must go,
+    // or it keeps serving the "Building…" holding page until restart.
+    const prevEndpoint = nodeEndpoints[nodeId];
+    if (prevEndpoint && prevEndpoint !== endpoint) {
+      const oldSt = pageState[prevEndpoint];
+      if (oldSt?.jsxHash && !isHashInUse(oldSt.jsxHash, pageState, prevEndpoint)) {
+        deleteCacheFiles(oldSt.jsxHash);
+      }
+      delete pageState[prevEndpoint];
+      removeRoute(RED.httpNode._router, prevEndpoint);
+      delete registeredRoutes[prevEndpoint];
+      if (endpointOwners[prevEndpoint] === nodeId) {
+        delete endpointOwners[prevEndpoint];
+      }
+      lastBroadcastCache.delete(prevEndpoint);
+    }
+    nodeEndpoints[nodeId] = endpoint;
+
     // State
     const clients = new Map(); // portalClient → ws
     const userIndex = new Map(); // userId → Set<ws>   (O(1) user-cast)
@@ -699,11 +732,11 @@ module.exports = function (RED) {
      * Errors set `pageState[endpoint].compiled.error` and the route handler
      * serves an error page (or the previous lastGood build with a banner).
      *
-     * @returns {void}
+     * @returns {Promise<void>}
      * @throws never — internal exceptions are caught and stored in pageState.
      * @private
      */
-    function rebuild() {
+    async function rebuild() {
       try {
         // ── Pre-build: clear cache, set building state, notify browsers ──
         const prevState = pageState[endpoint];
@@ -721,27 +754,11 @@ module.exports = function (RED) {
         const allEntries = Object.entries(registry);
         const needed = new Set();
 
-        // Word-boundary identifier match. Avoids prefix collisions (e.g. a
-        // `Button` rebuild marking `ButtonGroup` users as needing rebuild)
-        // and matches identifiers, not substrings inside other words.
-        // Regexes are cached per name so we don't pay the constructor cost
-        // on every recursion of addWithDeps.
-        const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const nameReCache = new Map();
-        const refRe = (n) => {
-          let r = nameReCache.get(n);
-          if (!r) {
-            r = new RegExp(`\\b${escapeRe(n)}\\b`);
-            nameReCache.set(n, r);
-          }
-          return r;
-        };
-
         /**
          * Depth-first walk that pulls a component and every transitively
-         * referenced sibling into `needed`. Matching uses `\b<name>\b`
-         * (cached) so a component named `Button` does not pull in
-         * `ButtonGroup`.
+         * referenced sibling into `needed`. Matching uses `identifierRe`
+         * (cached, identifier-boundary) so a component named `Button` does
+         * not pull in `ButtonGroup`.
          * @param {string} name
          * @returns {void}
          * @private
@@ -752,14 +769,14 @@ module.exports = function (RED) {
           if (!entry) return;
           needed.add(name);
           for (const [other] of allEntries) {
-            if (other !== name && refRe(other).test(entry.code)) {
+            if (other !== name && identifierRe(other).test(entry.code)) {
               addWithDeps(other);
             }
           }
         }
 
         for (const [name] of allEntries) {
-          if (refRe(name).test(componentCode)) {
+          if (identifierRe(name).test(componentCode)) {
             addWithDeps(name);
           }
         }
@@ -780,10 +797,11 @@ module.exports = function (RED) {
         const includedLibraryCode = [...needed]
           .map((n) => registry[n]?.code || "")
           .join("\n");
+        // identifierRe escapes regex metacharacters and handles `$`-edged
+        // names — symbols come from user code, so both matter here.
         const referencesAnySymbol = (text, syms) => {
           for (const s of syms) {
-            const re = new RegExp(`\\b${s}\\b`);
-            if (re.test(text)) return true;
+            if (identifierRe(s).test(text)) return true;
           }
           return false;
         };
@@ -815,19 +833,44 @@ module.exports = function (RED) {
         }
         portalNeededUtilities[nodeId] = new Set(neededUtils);
 
-        // Topological sort only needed components
-        const entries = allEntries.filter(([n]) => needed.has(n));
-        entries.sort((a, b) => {
-          const aUsesB = a[1].code.includes(b[0]);
-          const bUsesA = b[1].code.includes(a[0]);
-          if (aUsesB && !bUsesA) return 1; // a depends on b → b first
-          if (bUsesA && !aUsesB) return -1; // b depends on a → a first
-          return 0;
-        });
-        const libraryJsx = entries
+        // Topological sort of needed components (Kahn). Edge b→a when a's
+        // code references b, i.e. b must be emitted first. A pairwise
+        // Array.sort comparator is NOT transitive over dependency chains
+        // (A→B→C without a direct A→C reference), so a real topo sort is
+        // required. Cycles (mutual references) fall back to registry
+        // insertion order for the remainder.
+        const neededNames = allEntries
+          .filter(([n]) => needed.has(n))
+          .map(([n]) => n);
+        const indegree = new Map(neededNames.map((n) => [n, 0]));
+        const dependents = new Map(neededNames.map((n) => [n, []]));
+        for (const a of neededNames) {
+          const codeA = registry[a].code;
+          for (const b of neededNames) {
+            if (a !== b && identifierRe(b).test(codeA)) {
+              dependents.get(b).push(a);
+              indegree.set(a, indegree.get(a) + 1);
+            }
+          }
+        }
+        const topoQueue = neededNames.filter((n) => indegree.get(n) === 0);
+        const ordered = [];
+        while (topoQueue.length > 0) {
+          const n = topoQueue.shift();
+          ordered.push(n);
+          for (const d of dependents.get(n)) {
+            indegree.set(d, indegree.get(d) - 1);
+            if (indegree.get(d) === 0) topoQueue.push(d);
+          }
+        }
+        if (ordered.length < neededNames.length) {
+          const emitted = new Set(ordered);
+          for (const n of neededNames) if (!emitted.has(n)) ordered.push(n);
+        }
+        const libraryJsx = ordered
           .map(
-            ([name, c]) =>
-              `// Library: ${name}\nconst ${name} = (() => {\n${c.code}\nreturn ${name};\n})();`,
+            (name) =>
+              `// Library: ${name}\nconst ${name} = (() => {\n${registry[name].code}\nreturn ${name};\n})();`,
           )
           .join("\n\n");
 
@@ -1041,7 +1084,12 @@ module.exports = function (RED) {
           compiled = readCachedJS(jsxHash);
           cacheHit = !!compiled;
           if (!compiled) {
-            compiled = transpile(fullJsx);
+            compiled = await transpile(fullJsx);
+            // The await opens a window where close() may have torn this node
+            // down (redeploy/removal). Writing pageState now would resurrect
+            // state for a dead node — bail out; the successor node's own
+            // rebuild owns the endpoint from here.
+            if (isClosing) return;
             if (!compiled.error) {
               writeCachedJS(jsxHash, compiled.js, compiled.metafile);
             }
@@ -1102,9 +1150,13 @@ module.exports = function (RED) {
                   cssHash: prevState.cssHash,
                 });
               }
-              return generateCSS(fullJsx).then(({ css, cssHash }) => {
+              // cssHash is always jsxHash — generateCSS hashes raw fullJsx
+              // (no schema-version prefix), which would give the same CSS a
+              // different URL on cache-hit vs cache-miss builds and force a
+              // pointless browser refetch after redeploy.
+              return generateCSS(fullJsx).then(({ css }) => {
                 writeCachedCSS(jsxHash, css);
-                return { css, cssHash };
+                return { css, cssHash: jsxHash };
               });
             })().catch((err) => {
               // CSS generation failed (Tailwind compile error, missing
@@ -1123,10 +1175,19 @@ module.exports = function (RED) {
         lastJsxHash = jsxHash;
 
         // Preserve last successful build so that on transpile errors we keep
-        // serving the previous working JS instead of throwing clients to an error page.
+        // serving the previous working JS instead of throwing clients to an
+        // error page. On success, snapshot IMMEDIATELY (not after cssReady
+        // resolves) — a rebuild failing inside that async window must still
+        // find a fallback. cssHash is patched in when cssReady settles.
         const lastGood = compiled.error
           ? prevState?.lastGood || null
-          : null; // will be populated after cssReady resolves on success
+          : {
+              compiledJs: compiled.js,
+              contentHash,
+              cssHash: "",
+              pageTitle,
+              customHead,
+            };
 
         pageState[endpoint] = {
           compiled,
@@ -1495,7 +1556,9 @@ module.exports = function (RED) {
             }
             lastBroadcastCache.set(endpoint, cached);
           }
-          updateStatus();
+          // No updateStatus() here — client count only changes on WS
+          // connect/disconnect, and emitting a status event per routed msg
+          // floods the editor comms channel on high-rate streams.
           done();
         } catch (err) {
           // Catch-node propagation: done(err) lets the runtime route the
@@ -1581,6 +1644,7 @@ module.exports = function (RED) {
           if (removed) {
             lastBroadcastCache.delete(endpoint);
             delete portalSig[nodeId];
+            delete nodeEndpoints[nodeId];
           }
 
           // Clear the userIndex — WS clients are already closed above, but

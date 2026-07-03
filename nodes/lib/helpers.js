@@ -319,6 +319,32 @@ const REACT_BUILTIN_TAGS = new Set([
 const PASCAL_TAG_RE = /<\s*([A-Z][A-Za-z0-9_]*)/g;
 const RE_ESCAPE = /[.*+?^${}()|[\]\\]/g;
 
+// Cached identifier-boundary regexes shared by every "does this code
+// reference identifier X" scan (component deps, utility selection, dirty-
+// portal matching, topological sort). `\b` breaks for names that start or
+// end with `$` — a legal identifier char that is not a regex word char — so
+// lookarounds on the [\w$] class are used instead. Cache is bounded: cleared
+// wholesale past 5000 entries (long-running process with many renames).
+const IDENT_RE_CACHE = new Map();
+
+/**
+ * Return a cached RegExp matching `name` as a standalone JS identifier
+ * (not as a prefix/suffix/substring of a longer identifier).
+ *
+ * @param {string} name  Identifier to match (component/utility/symbol name).
+ * @returns {RegExp}
+ */
+function identifierRe(name) {
+  let re = IDENT_RE_CACHE.get(name);
+  if (!re) {
+    if (IDENT_RE_CACHE.size > 5000) IDENT_RE_CACHE.clear();
+    const escaped = name.replace(RE_ESCAPE, "\\$&");
+    re = new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`);
+    IDENT_RE_CACHE.set(name, re);
+  }
+  return re;
+}
+
 /**
  * Find PascalCase JSX tags in `userCode` that have no visible definition.
  *
@@ -411,6 +437,7 @@ module.exports.quickCheckSyntax = quickCheckSyntax;
 module.exports.formatEsbuildError = formatEsbuildError;
 module.exports.extractPortalUser = extractPortalUser;
 module.exports.findMissingComponentRefs = findMissingComponentRefs;
+module.exports.identifierRe = identifierRe;
 module.exports.serveableHash = serveableHash;
 module.exports.hasFreshBuild = hasFreshBuild;
 module.exports.NAME_MAX_LEN = NAME_MAX_LEN;
@@ -575,21 +602,24 @@ function createHelpers(RED) {
 
   /**
    * Bundle the user JSX (with utility/library/import code already concatenated)
-   * into a minified IIFE. Pre-validates with `quickCheckSyntax` first to avoid
-   * esbuild `buildSync` deadlocks on malformed input. The `react`/`react-dom`
-   * alias points at this package's own copies so peer-dep packages share a
-   * single React instance.
+   * into a minified IIFE. Pre-validates with `quickCheckSyntax` first so
+   * malformed input never reaches the bundler. Uses the async `esbuild.build`
+   * API — a large bundle (three.js et al.) runs in esbuild's service process
+   * without blocking the Node-RED event loop. The `react`/`react-dom` alias
+   * points at this package's own copies so peer-dep packages share a single
+   * React instance.
    *
    * @param {string} jsx
-   * @returns {TranspileResult}
+   * @returns {Promise<TranspileResult>}
    */
-  function transpile(jsx) {
-    // Pre-validate with transformSync (fast, no bundling) to avoid esbuild buildSync deadlock on syntax errors
+  async function transpile(jsx) {
+    // Pre-validate with transformSync (fast, no bundling) so syntax errors get
+    // clean line-numbered diagnostics before any resolution work
     const syntaxErr = quickCheckSyntax(jsx);
     if (syntaxErr) return { js: null, error: syntaxErr };
     // Syntax OK — bundle with full resolution
     try {
-      const buildResult = esbuild.buildSync({
+      const buildResult = await esbuild.build({
         stdin: {
           contents: jsx,
           resolveDir: pkgRoot,
@@ -639,6 +669,7 @@ function createHelpers(RED) {
     isSafeName,
     validateSubPath,
     findMissingComponentRefs,
+    identifierRe,
     pkgRoot,
     userDir,
     cacheDir,

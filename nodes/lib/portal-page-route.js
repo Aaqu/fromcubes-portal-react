@@ -40,6 +40,7 @@ function createPortalPageHandler(opts) {
   } = opts;
 
   return async function portalPageHandler(req, res) {
+    let cssTimer = null;
     try {
       const state = pageState[endpoint];
       if (!state || state.building || !state.compiled) {
@@ -88,13 +89,16 @@ function createPortalPageHandler(opts) {
 
       const { cssHash } = await Promise.race([
         state.cssReady,
-        new Promise((_, reject) =>
-          setTimeout(
+        new Promise((_, reject) => {
+          cssTimer = setTimeout(
             () => reject(new Error("CSS generation timeout")),
             15000,
-          ),
-        ),
+          );
+        }),
       ]);
+      // Clear the losing timer — without this every request leaves a 15 s
+      // timer pending after the CSS promise wins the race.
+      clearTimeout(cssTimer);
       const user = state.portalAuth ? extractPortalUser(req.headers) : null;
       res
         .type("text/html")
@@ -111,6 +115,7 @@ function createPortalPageHandler(opts) {
           ),
         );
     } catch (e) {
+      clearTimeout(cssTimer);
       res
         .status(500)
         .type("text/html")
