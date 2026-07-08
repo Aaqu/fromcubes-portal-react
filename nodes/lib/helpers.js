@@ -427,6 +427,44 @@ function hasFreshBuild(state) {
   return !!state && !state.building && !!state.compiled && !state.compiled.error;
 }
 
+/**
+ * Decide whether the `preInstall` hook may veto an npm install because the
+ * module is already on disk. Vetoing is ONLY safe for plain installs of an
+ * already-present package (the offline/Docker case). It must never swallow:
+ *
+ *   - **upgrades** (`event.isUpgrade`) — the palette manager's "update"
+ *     button routes through the same install path; vetoing it makes Node-RED
+ *     mark the module `pendingUpdated` and demand a restart while the old
+ *     files stay on disk — the update silently never lands,
+ *   - **explicit version requests** that differ from the installed version
+ *     (e.g. a `libs` entry bumped from `^4.4.0`) — npm itself no-ops when
+ *     the range is already satisfied, so letting it run is the safe side.
+ *
+ * An unreadable/corrupt package.json also proceeds with the install (npm
+ * repairs what we cannot verify).
+ *
+ * @param {{dir: string, module: string, version?: string, isUpgrade?: boolean}} event
+ *        `preInstall` hook payload from `@node-red/registry`.
+ * @returns {boolean}  true → hook should return false (skip npm install).
+ */
+function shouldSkipInstall(event) {
+  if (event.isUpgrade) return false;
+  const modDir = path.join(event.dir, "node_modules", event.module);
+  if (!fs.existsSync(modDir)) return false;
+  if (event.version) {
+    let installed;
+    try {
+      installed = JSON.parse(
+        fs.readFileSync(path.join(modDir, "package.json"), "utf8"),
+      ).version;
+    } catch (_) {
+      return false;
+    }
+    if (installed !== event.version) return false;
+  }
+  return true;
+}
+
 module.exports = function (RED) {
   return createHelpers(RED);
 };
@@ -440,6 +478,7 @@ module.exports.findMissingComponentRefs = findMissingComponentRefs;
 module.exports.identifierRe = identifierRe;
 module.exports.serveableHash = serveableHash;
 module.exports.hasFreshBuild = hasFreshBuild;
+module.exports.shouldSkipInstall = shouldSkipInstall;
 module.exports.NAME_MAX_LEN = NAME_MAX_LEN;
 module.exports.MAX_GROUPS_HEADER_BYTES = MAX_GROUPS_HEADER_BYTES;
 
@@ -461,20 +500,22 @@ function createHelpers(RED) {
    * `preInstall` hook (Node-RED 1.3+) — vetoes an npm install when the
    * package is already on disk. Useful for offline/Docker setups where
    * Node-RED's auto-install pass would otherwise try to hit the registry
-   * and fail. Hook itself is *optional by design*: any unexpected error
+   * and fail. Upgrades and mismatched explicit versions are never vetoed
+   * (see {@link shouldSkipInstall}) — vetoing an upgrade leaves the old
+   * files on disk while Node-RED demands a restart, so the update never
+   * installs. Hook itself is *optional by design*: any unexpected error
    * inside the body MUST NOT bubble up (it would cancel an install path
    * the user actually expected to run). We log at `trace` level so the
    * developer can opt into diagnostics via `logging.level = trace` in
    * `settings.js`, without spamming default-level logs.
    *
-   * @param {{dir: string, module: string}} event
+   * @param {{dir: string, module: string, version?: string, isUpgrade?: boolean}} event
    * @returns {boolean|void}  `false` skips the install; anything else proceeds.
    * @listens RED.hooks#preInstall.portalReact
    */
   RED.hooks.add("preInstall.portalReact", (event) => {
     try {
-      const modDir = path.join(event.dir, "node_modules", event.module);
-      if (fs.existsSync(modDir)) {
+      if (shouldSkipInstall(event)) {
         RED.log.info(
           `[portal-react] ${event.module} already in node_modules, skipping install`,
         );

@@ -2,6 +2,10 @@
  * Unit tests for pure helpers exposed on the helpers module (no RED runtime).
  */
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
 const {
   validateSubPath,
   quickCheckSyntax,
@@ -9,6 +13,7 @@ const {
   serveableHash,
   hasFreshBuild,
   identifierRe,
+  shouldSkipInstall,
 } = require("../nodes/lib/helpers");
 const { extractUtilitySymbols } = require("../nodes/lib/registry-nodes");
 
@@ -380,5 +385,77 @@ describe("extractUtilitySymbols", () => {
 
   it("returns empty for oversized input (ReDoS guard)", () => {
     expect(extractUtilitySymbols("const a = 1;".repeat(200000)).size).toBe(0);
+  });
+});
+
+describe("shouldSkipInstall", () => {
+  let dir;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "fc-preinstall-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function installFake(module, version) {
+    const modDir = path.join(dir, "node_modules", module);
+    fs.mkdirSync(modDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(modDir, "package.json"),
+      JSON.stringify({ name: module, version }),
+    );
+  }
+
+  it("skips a plain re-install of an already-present module", () => {
+    installFake("chart.js", "4.4.0");
+    expect(shouldSkipInstall({ dir, module: "chart.js" })).toBe(true);
+  });
+
+  it("proceeds when the module is not on disk", () => {
+    expect(shouldSkipInstall({ dir, module: "chart.js" })).toBe(false);
+  });
+
+  it("never vetoes an upgrade, even when the module is on disk", () => {
+    installFake("@aaqu/fromcubes-portal-react", "0.1.0-alpha.27");
+    expect(
+      shouldSkipInstall({
+        dir,
+        module: "@aaqu/fromcubes-portal-react",
+        version: "0.1.0-alpha.28",
+        isUpgrade: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("proceeds when a different explicit version is requested", () => {
+    installFake("chart.js", "4.4.0");
+    expect(
+      shouldSkipInstall({ dir, module: "chart.js", version: "4.5.0" }),
+    ).toBe(false);
+  });
+
+  it("skips when the requested version matches the installed one", () => {
+    installFake("chart.js", "4.4.0");
+    expect(
+      shouldSkipInstall({ dir, module: "chart.js", version: "4.4.0" }),
+    ).toBe(true);
+  });
+
+  it("proceeds when a version is requested but package.json is unreadable", () => {
+    installFake("chart.js", "4.4.0");
+    fs.writeFileSync(
+      path.join(dir, "node_modules", "chart.js", "package.json"),
+      "{ not json",
+    );
+    expect(
+      shouldSkipInstall({ dir, module: "chart.js", version: "4.4.0" }),
+    ).toBe(false);
+  });
+
+  it("resolves scoped module names to their nested directory", () => {
+    installFake("@scope/pkg", "1.0.0");
+    expect(shouldSkipInstall({ dir, module: "@scope/pkg" })).toBe(true);
   });
 });
