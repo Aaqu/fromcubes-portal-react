@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fromcubes portal-react — React 19 dashboards for Node-RED</title>
-<meta name="description" content="Step-by-step guide: build a live React 19 dashboard in Node-RED with portal-react — JSX compiled server-side, Tailwind CSS 4, WebSocket data binding.">
+<title>fromcubes-portal-react — React 19 dashboards for Node-RED</title>
+<meta name="description" content="Step-by-step guide: build a live React 19 dashboard in Node-RED with fromcubes-portal-react — JSX compiled server-side, Tailwind CSS 4, WebSocket data binding.">
 <style>
   :root {
     --bg: #0b0b0d;
@@ -155,7 +155,7 @@
 
 <header class="site">
   <div class="inner">
-    <div class="logo">fromcubes <span>portal-react</span></div>
+    <div class="logo">fromcubes-<span>portal-react</span></div>
     <nav>
       <a href="#install">Install</a>
       <a href="#import">Import</a>
@@ -172,7 +172,7 @@
   <div class="hero">
     <h1>React 19 dashboards<br>inside <em>Node-RED</em>.</h1>
     <p class="lead">
-      <strong>portal-react</strong> is a Node-RED node that serves live React applications.
+      <strong>fromcubes-portal-react</strong> is a Node-RED node that serves live React applications.
       You paste JSX straight into the node, it is compiled server-side with esbuild at deploy
       time, styled with Tailwind CSS 4, and wired to your flows over WebSocket — no build
       step, no runtime compilation in the browser.
@@ -319,7 +319,7 @@ return msg;</pre>
   <div class="wrap">
     <span class="step-tag"><span class="n">5</span> Deploy</span>
     <h2>Deploy — the server does the rest</h2>
-    <p>Hit <strong>Deploy</strong>. At that moment portal-react:</p>
+    <p>Hit <strong>Deploy</strong>. At that moment fromcubes-portal-react:</p>
     <ul class="plain">
       <li><strong>bundles</strong> React 19, your JSX, referenced shared components and any npm packages into a single file with esbuild,</li>
       <li><strong>generates Tailwind CSS</strong> for exactly the classes you used,</li>
@@ -379,7 +379,7 @@ return msg;</pre>
 
 <footer>
   <div class="wrap">
-    <div>© Aaqu — Apache-2.0. Built with portal-react itself: the dashboard above is a real, running flow.</div>
+    <div>© Aaqu — Apache-2.0. Built with fromcubes-portal-react itself: the dashboard above is a real, running flow.</div>
     <div>
       <a href="https://github.com/Aaqu/fromcubes-portal-react">GitHub</a> ·
       <a href="https://www.npmjs.com/package/@aaqu/fromcubes-portal-react">npm</a>
