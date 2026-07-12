@@ -69,8 +69,6 @@
         "name": "Bar",
         "compName": "Bar",
         "compCode": "function Bar({ value = 0, label = '' }) {\n  // Component uses `clamp` from the utility node — selective inclusion picks\n  // up the dependency through the components' code, not just the user JSX.\n  const pct = clamp(value, CLAMP_MIN, CLAMP_MAX);\n  const color = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-amber-500' : 'bg-emerald-500';\n  return (\n    <div className=\"flex items-center gap-3\">\n      <div className=\"w-24 text-xs text-zinc-400 uppercase tracking-wider\">{label}</div>\n      <div className=\"flex-1 h-3 bg-zinc-800 rounded-full overflow-hidden\">\n        <div className={`h-full ${color} transition-all duration-150`} style={{ width: pct + '%' }} />\n      </div>\n      <div className=\"w-14 text-right font-mono text-sm tabular-nums text-zinc-200\">\n        {value.toFixed(1)}\n      </div>\n    </div>\n  );\n}",
-        "compInputs": "value,label",
-        "compOutputs": "",
         "x": 360,
         "y": 280,
         "wires": []
