@@ -23,6 +23,7 @@
     "nodes/",
     "examples/",
     "README.md",
+    "AI-GUIDE.md",
     "LICENSE"
   ],
   "engines": {
