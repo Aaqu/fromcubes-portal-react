@@ -13,7 +13,6 @@
 A Node-RED node that turns any `/fromcubes/<sub-path>` URL into a React page. Write JSX in the editor, deploy, open the URL — your component talks to the flow over WebSocket. No build step, no browser compiler. All portal pages are served under the hardcoded `/fromcubes/` prefix so every node cleanly coexists under one URL tree.
 
 For internals, plugin authoring, and the deploy pipeline see [README-DEV.md](./README-DEV.md).
-Want an AI model to generate flows for you? Paste [AI-GUIDE.md](./AI-GUIDE.md) into it — a self-contained authoring contract (node types, flow-JSON fields, runtime API, rules, skeleton).
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L01UOFRG)
 
