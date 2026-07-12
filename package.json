@@ -70,7 +70,7 @@
   "bugs": {
     "url": "https://github.com/Aaqu/fromcubes-portal-react/issues"
   },
-  "homepage": "https://github.com/Aaqu/fromcubes-portal-react#readme",
+  "homepage": "https://aaqu.github.io/fromcubes-portal-react/",
   "license": "Apache-2.0",
   "author": "aaqu",
   "publishConfig": {
