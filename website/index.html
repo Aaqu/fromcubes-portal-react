@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fromcubes-portal-react — React 19 dashboards for Node-RED</title>
+<meta name="description" content="Step-by-step guide: build a live React 19 dashboard in Node-RED with fromcubes-portal-react — JSX compiled server-side, Tailwind CSS 4, WebSocket data binding.">
+<style>
+  :root {
+    --bg: #0b0b0d;
+    --bg-soft: #131316;
+    --bg-card: #17171b;
+    --border: #26262c;
+    --text: #e7e7ea;
+    --text-dim: #9a9aa3;
+    --accent: #f59e0b;
+    --accent-2: #3b82f6;
+    --green: #34d399;
+    --code-bg: #101014;
+    --radius: 12px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header.site {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(11,11,13,.85); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  header.site .inner {
+    max-width: 1020px; margin: 0 auto; padding: 12px 24px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  .logo { font-weight: 700; letter-spacing: -.02em; color: var(--text); }
+  .logo span { color: var(--accent); }
+  nav { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; margin-left: auto; }
+  nav a { color: var(--text-dim); }
+  nav a:hover { color: var(--text); text-decoration: none; }
+
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 0 24px; }
+
+  .hero { padding: 72px 0 48px; }
+  .hero h1 {
+    font-size: clamp(30px, 5vw, 46px); line-height: 1.15;
+    letter-spacing: -.03em; font-weight: 800;
+  }
+  .hero h1 em { color: var(--accent); font-style: normal; }
+  .hero p.lead { margin-top: 16px; max-width: 640px; color: var(--text-dim); font-size: 18px; }
+  .hero .cta { margin-top: 28px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .badges { margin-top: 20px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .badges a { display: block; }
+  .badges img { height: 20px; display: block; }
+  .btn {
+    display: inline-block; padding: 10px 18px; border-radius: 10px;
+    font-weight: 600; font-size: 15px; border: 1px solid var(--border);
+    color: var(--text); background: var(--bg-card);
+  }
+  .btn:hover { text-decoration: none; border-color: #3a3a42; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1205; }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  .features {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px; padding: 8px 0 40px;
+  }
+  .feature {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .feature h3 { font-size: 15px; margin-bottom: 6px; }
+  .feature p { font-size: 14px; color: var(--text-dim); }
+
+  section.step { padding: 44px 0; border-top: 1px solid var(--border); }
+  .step-tag {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-size: 13px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent);
+  }
+  .step-tag .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #1a1205; font-size: 14px;
+  }
+  section.step h2 { margin-top: 12px; font-size: 26px; letter-spacing: -.02em; }
+  section.step > .wrap > p { margin-top: 10px; color: var(--text-dim); max-width: 720px; }
+  section.step p code, section.step li code, td code {
+    font-family: var(--mono); font-size: .88em;
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 6px; color: #eab308;
+  }
+
+  figure { margin: 24px 0 0; }
+  figure a { display: block; }
+  figure img {
+    width: 100%; height: auto; display: block;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: 0 18px 50px rgba(0,0,0,.5);
+  }
+  figcaption { margin-top: 10px; font-size: 13px; color: var(--text-dim); text-align: center; }
+
+  pre {
+    margin: 20px 0 0; padding: 18px 20px; overflow-x: auto;
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); font-family: var(--mono);
+    font-size: 13.5px; line-height: 1.6; color: #d6d6dd;
+  }
+  pre .c { color: #6b7280; }
+  pre .k { color: #c084fc; }
+  pre .s { color: #86efac; }
+  pre .t { color: #7dd3fc; }
+  pre .f { color: #fbbf24; }
+  .file-label {
+    margin-top: 20px; display: inline-block; font-family: var(--mono);
+    font-size: 12px; color: var(--text-dim);
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-bottom: none; border-radius: 8px 8px 0 0; padding: 5px 12px;
+  }
+  .file-label + pre { margin-top: 0; border-top-left-radius: 0; }
+
+  .callout {
+    margin-top: 20px; padding: 14px 18px; border-radius: 10px;
+    border: 1px solid rgba(245,158,11,.35); background: rgba(245,158,11,.07);
+    font-size: 14.5px; color: var(--text);
+  }
+  .callout.blue { border-color: rgba(59,130,246,.35); background: rgba(59,130,246,.08); }
+  .callout strong { color: var(--accent); }
+  .callout.blue strong { color: var(--accent-2); }
+
+  table { margin-top: 20px; width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 14px; border: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--bg-soft); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
+  .table-scroll { overflow-x: auto; }
+
+  ul.plain { margin: 14px 0 0 20px; color: var(--text-dim); }
+  ul.plain li { margin-top: 6px; }
+  ul.plain li strong { color: var(--text); }
+
+  footer {
+    border-top: 1px solid var(--border); margin-top: 40px;
+    padding: 36px 0 48px; font-size: 14px; color: var(--text-dim);
+  }
+  footer .wrap { display: flex; gap: 20px; flex-wrap: wrap; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="inner">
+    <div class="logo">fromcubes-<span>portal-react</span></div>
+    <nav>
+      <a href="#install">Install</a>
+      <a href="#import">Import</a>
+      <a href="#flow">The flow</a>
+      <a href="#jsx">React code</a>
+      <a href="#dashboard">Dashboard</a>
+      <a href="#api">API</a>
+      <a href="https://github.com/Aaqu/fromcubes-portal-react">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <h1>React 19 dashboards<br>inside <em>Node-RED</em>.</h1>
+    <p class="lead">
+      <strong>fromcubes-portal-react</strong> is a Node-RED node that serves live React applications.
+      You paste JSX straight into the node, it is compiled server-side with esbuild at deploy
+      time, styled with Tailwind CSS 4, and wired to your flows over WebSocket — no build
+      step, no runtime compilation in the browser.
+    </p>
+    <div class="badges">
+      <a href="https://www.npmjs.com/package/@aaqu/fromcubes-portal-react"><img src="https://img.shields.io/npm/v/%40aaqu%2Ffromcubes-portal-react?style=flat-square&labelColor=26262c&color=f59e0b" alt="npm version"></a>
+      <a href="https://www.npmjs.com/package/@aaqu/fromcubes-portal-react"><img src="https://img.shields.io/npm/dm/%40aaqu%2Ffromcubes-portal-react?style=flat-square&labelColor=26262c&color=3b82f6" alt="npm downloads per month"></a>
+      <a href="https://www.npmjs.com/package/@aaqu/fromcubes-portal-react"><img src="https://img.shields.io/node/v/%40aaqu%2Ffromcubes-portal-react?style=flat-square&labelColor=26262c&color=34d399" alt="node version"></a>
+      <a href="https://nodered.org"><img src="https://img.shields.io/badge/Node--RED-%E2%89%A5%204.0-8f0000?style=flat-square&labelColor=26262c" alt="Node-RED >= 4.0"></a>
+      <a href="https://github.com/Aaqu/fromcubes-portal-react/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/%40aaqu%2Ffromcubes-portal-react?style=flat-square&labelColor=26262c&color=9a9aa3" alt="license"></a>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="#install">Get started</a>
+      <a class="btn" href="https://github.com/Aaqu/fromcubes-portal-react">Source on GitHub</a>
+    </div>
+  </div>
+
+  <div class="features">
+    <div class="feature">
+      <h3>⚛️ React 19 + JSX</h3>
+      <p>Write plain JSX in the node editor. esbuild bundles React and your code into one file at deploy time.</p>
+    </div>
+    <div class="feature">
+      <h3>🎨 Tailwind CSS 4</h3>
+      <p>Utility classes are scanned server-side and served as static CSS. Autocompletion in the editor included.</p>
+    </div>
+    <div class="feature">
+      <h3>🔌 Live WebSocket data</h3>
+      <p>The <code style="font-family:var(--mono)">useNodeRed()</code> hook binds <em>msg.payload</em> to React state and sends events back to the flow.</p>
+    </div>
+    <div class="feature">
+      <h3>🧩 Shared components</h3>
+      <p>Define components once in <em>fc-portal-component</em> nodes and reuse them across every portal page.</p>
+    </div>
+    <div class="feature">
+      <h3>📦 npm packages</h3>
+      <p>Chart.js, D3, Three.js, PixiJS… declared per node, auto-installed and bundled at deploy.</p>
+    </div>
+    <div class="feature">
+      <h3>🗂 Static assets</h3>
+      <p>Built-in file manager sidebar serves models, textures and fonts at <em>/fromcubes/public/</em>.</p>
+    </div>
+  </div>
+</div>
+
+<!-- STEP 1 -->
+<section class="step" id="install">
+  <div class="wrap">
+    <span class="step-tag"><span class="n">1</span> Install</span>
+    <h2>Install the package in Node-RED</h2>
+    <p>Install into your Node-RED user directory (usually <code>~/.node-red</code>) and restart Node-RED. Requires Node-RED ≥ 4 and Node.js ≥ 18.5.</p>
+    <pre>cd ~/.node-red
+npm install @aaqu/fromcubes-portal-react
+<span class="c"># restart Node-RED afterwards</span></pre>
+    <p style="margin-top:16px">After the restart three new nodes appear in the palette under the <strong>fromcubes</strong> category: <code>portal react</code>, <code>react component</code> and <code>react utility</code>.</p>
+  </div>
+</section>
+
+<!-- STEP 2 -->
+<section class="step" id="import">
+  <div class="wrap">
+    <span class="step-tag"><span class="n">2</span> Import</span>
+    <h2>Import the example flows</h2>
+    <p>The package ships ready-made examples. In the editor open <strong>Menu → Import → Examples → @aaqu/fromcubes-portal-react</strong>. Import <strong>Shared Components</strong> first (it provides the reusable UI building blocks), then <strong>Sensor Portal</strong> — the example this guide follows end-to-end.</p>
+    <figure>
+      <a href="img/01-import-examples.png"><img src="img/01-import-examples.png" alt="Node-RED Import dialog with the package examples listed, Sensor Portal selected" loading="lazy"></a>
+      <figcaption>Import → Examples: pick <em>Shared Components</em>, then <em>Sensor Portal</em>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- STEP 3 -->
+<section class="step" id="flow">
+  <div class="wrap">
+    <span class="step-tag"><span class="n">3</span> The flow</span>
+    <h2>Two flows, five reusable components, one portal</h2>
+    <p>The <strong>Shared Components</strong> flow contains only <code>fc-portal-component</code> nodes — <code>Page</code>, <code>Header</code>, <code>Stat</code>, <code>Button</code> and <code>ValueBadge</code>. Each node holds one React component; once deployed, any portal page can use them as JSX tags.</p>
+    <figure>
+      <a href="img/02-flow-shared.png"><img src="img/02-flow-shared.png" alt="Shared Components flow with five fc-portal-component nodes in the Node-RED workspace" loading="lazy"></a>
+      <figcaption>The component library — plain canvas nodes, no wires needed.</figcaption>
+    </figure>
+    <p style="margin-top:26px">The <strong>Sensor Portal</strong> flow is the actual application: an <em>inject</em> node ticks every 2&nbsp;seconds, a <em>function</em> node generates random sensor readings, and the <strong>portal-react</strong> node renders them. Anything wired out of the portal node comes from the browser (button clicks, form input).</p>
+    <figure>
+      <a href="img/03-flow-sensor.png"><img src="img/03-flow-sensor.png" alt="Sensor Portal flow: inject, function, portal-react node and debug node wired together" loading="lazy"></a>
+      <figcaption>inject → function → <strong>Sensor Portal</strong> (portal-react) → debug. The Gauge component sits beside the flow.</figcaption>
+    </figure>
+    <span class="file-label">function&nbsp;·&nbsp;Random sensors</span>
+    <pre>msg.payload = {
+  temp: +(18 + Math.random() * 12).toFixed(1),
+  humidity: Math.round(35 + Math.random() * 40),
+  pressure: Math.round(995 + Math.random() * 35),
+  ts: Date.now()
+};
+return msg;</pre>
+  </div>
+</section>
+
+<!-- STEP 4 -->
+<section class="step" id="jsx">
+  <div class="wrap">
+    <span class="step-tag"><span class="n">4</span> React code</span>
+    <h2>Paste React straight into the node</h2>
+    <p>Double-click the <strong>Sensor Portal</strong> node. The <strong>JSX</strong> tab holds the page's <code>App()</code> component in a Monaco editor with JSX highlighting, Tailwind class completion and tag completion for your shared components. The <strong>URL sub-path</strong> field (here <code>sensors</code>) decides where the page is served: <code>/fromcubes/sensors</code>.</p>
+    <figure>
+      <a href="img/04-edit-portal-jsx.png"><img src="img/04-edit-portal-jsx.png" alt="portal-react node edit dialog with the App component JSX visible in the Monaco editor" loading="lazy"></a>
+      <figcaption>The portal node editor — React code exactly as you write it, compiled at deploy.</figcaption>
+    </figure>
+    <span class="file-label">portal-react&nbsp;·&nbsp;JSX tab</span>
+    <pre><span class="k">function</span> <span class="f">App</span>() {
+  <span class="k">const</span> { data, send } = <span class="f">useNodeRed</span>();
+  <span class="k">const</span> s = data || { temp: <span class="t">0</span>, humidity: <span class="t">0</span>, pressure: <span class="t">0</span> };
+
+  <span class="k">return</span> (
+    &lt;<span class="t">Page</span>&gt;
+      &lt;<span class="t">Header</span> title=<span class="s">"Sensor Portal"</span> subtitle=<span class="s">"live sensor data"</span> /&gt;
+      &lt;<span class="t">div</span> className=<span class="s">"flex-1 flex flex-col items-center justify-center p-8"</span>&gt;
+        &lt;<span class="t">div</span> className=<span class="s">"flex gap-10 flex-wrap justify-center"</span>&gt;
+          &lt;<span class="t">Gauge</span> value={s.temp} min={-<span class="t">10</span>} max={<span class="t">50</span>} label=<span class="s">"Temperature"</span> unit=<span class="s">"°C"</span> /&gt;
+          &lt;<span class="t">Gauge</span> value={s.humidity} min={<span class="t">0</span>} max={<span class="t">100</span>} label=<span class="s">"Humidity"</span> unit=<span class="s">"%"</span> /&gt;
+          &lt;<span class="t">Gauge</span> value={s.pressure} min={<span class="t">950</span>} max={<span class="t">1050</span>} label=<span class="s">"Pressure"</span> unit=<span class="s">"hPa"</span> /&gt;
+        &lt;/<span class="t">div</span>&gt;
+        &lt;<span class="t">div</span> className=<span class="s">"mt-10 flex gap-3 items-center"</span>&gt;
+          &lt;<span class="t">Button</span> onClick={() =&gt; <span class="f">send</span>({ action: <span class="s">'refresh'</span> })}&gt;Refresh&lt;/<span class="t">Button</span>&gt;
+          &lt;<span class="t">ValueBadge</span> label=<span class="s">"Last"</span> value={s.ts ? <span class="k">new</span> <span class="f">Date</span>(s.ts).<span class="f">toLocaleTimeString</span>() : <span class="t">null</span>} /&gt;
+        &lt;/<span class="t">div</span>&gt;
+      &lt;/<span class="t">div</span>&gt;
+    &lt;/<span class="t">Page</span>&gt;
+  );
+}</pre>
+    <div class="callout blue">
+      <strong>Where do Page, Header, Gauge come from?</strong> They are <code>fc-portal-component</code> nodes.
+      The bundler injects only the components your JSX actually references (plus their dependencies) — everything else is tree-shaken away.
+    </div>
+    <p style="margin-top:26px">The <strong>Gauge</strong> used by this page is itself a component node living next to the flow — a plain React function component with Tailwind classes and an SVG arc:</p>
+    <figure>
+      <a href="img/05-edit-component.png"><img src="img/05-edit-component.png" alt="fc-portal-component edit dialog showing the Gauge component source code" loading="lazy"></a>
+      <figcaption>The <em>react component</em> node: Name + JSX Tag + code. One component per node.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- STEP 5 -->
+<section class="step" id="deploy">
+  <div class="wrap">
+    <span class="step-tag"><span class="n">5</span> Deploy</span>
+    <h2>Deploy — the server does the rest</h2>
+    <p>Hit <strong>Deploy</strong>. At that moment fromcubes-portal-react:</p>
+    <ul class="plain">
+      <li><strong>bundles</strong> React 19, your JSX, referenced shared components and any npm packages into a single file with esbuild,</li>
+      <li><strong>generates Tailwind CSS</strong> for exactly the classes you used,</li>
+      <li><strong>registers the route</strong> <code>/fromcubes/&lt;sub-path&gt;</code> and a WebSocket endpoint next to it,</li>
+      <li><strong>notifies open browsers</strong> — connected clients show a build spinner and auto-reload when the new version is ready.</li>
+    </ul>
+    <div class="callout">
+      <strong>Build failed?</strong> The node shows a red status with the reason (syntax error, missing component…),
+      and connected clients keep the last working page while an error banner explains what broke.
+    </div>
+  </div>
+</section>
+
+<!-- STEP 6 -->
+<section class="step" id="dashboard">
+  <div class="wrap">
+    <span class="step-tag"><span class="n">6</span> Result</span>
+    <h2>Open the dashboard</h2>
+    <p>Navigate to <code>http://&lt;your-host&gt;:1880/fromcubes/sensors</code>. The gauges animate every two seconds as the inject node fires; every open tab stays in sync because broadcast messages reach all connected clients. Clicking <strong>Refresh</strong> emits a message on the portal node's output wire — check the debug sidebar.</p>
+    <figure>
+      <a href="img/06-dashboard.png"><img src="img/06-dashboard.png" alt="Live Sensor Portal dashboard with three animated gauges: temperature, humidity, pressure" loading="lazy"></a>
+      <figcaption>The finished portal at <em>/fromcubes/sensors</em> — live data, zero client-side compilation.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- API -->
+<section class="step" id="api">
+  <div class="wrap">
+    <span class="step-tag"><span class="n">7</span> Reference</span>
+    <h2>The <code style="font-size:.85em">useNodeRed()</code> hook</h2>
+    <p>Every portal page gets one hook that is the whole runtime API:</p>
+    <pre><span class="k">const</span> { data, send, user, portalClient } = <span class="f">useNodeRed</span>();</pre>
+    <div class="table-scroll">
+    <table>
+      <tr><th style="width:160px">Field</th><th>Description</th></tr>
+      <tr><td><code>data</code></td><td>Reactive value of the last <code>msg.payload</code> received on the node's input. Re-renders the component on every message.</td></tr>
+      <tr><td><code>send(payload, topic?)</code></td><td>Emits a message on the portal node's output wire. The message carries <code>msg._client</code> so replies can target just this browser tab.</td></tr>
+      <tr><td><code>user</code></td><td>Portal auth data forwarded by a reverse proxy (<code>x-portal-user-*</code> headers), or <code>null</code>.</td></tr>
+      <tr><td><code>portalClient</code></td><td>Unique id of this session/tab, assigned by the server — useful for per-client state.</td></tr>
+    </table>
+    </div>
+    <div class="callout blue">
+      <strong>Targeting clients from the flow:</strong> reply with the incoming <code>msg._client</code> intact to answer one tab,
+      strip <code>portalClient</code> to reach all tabs of one user, or omit <code>msg._client</code> entirely to broadcast.
+    </div>
+    <h2 style="margin-top:44px">Where to go next</h2>
+    <ul class="plain">
+      <li><strong>Live Chart</strong> — Chart.js streaming chart (npm packages via the node's <em>libs</em> list),</li>
+      <li><strong>Three.js Scene</strong> — react-three-fiber 3D scene,</li>
+      <li><strong>D3 Poland Map</strong>, <strong>PixiJS Sprites</strong>, <strong>WebGPU Shader</strong> — more bundling show-cases,</li>
+      <li><strong>Utility Hooks</strong> — share plain helpers and custom hooks via <em>react utility</em> nodes.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>© Aaqu — Apache-2.0. Built with fromcubes-portal-react itself: the dashboard above is a real, running flow.</div>
+    <div>
+      <a href="https://github.com/Aaqu/fromcubes-portal-react">GitHub</a> ·
+      <a href="https://www.npmjs.com/package/@aaqu/fromcubes-portal-react">npm</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,6 +1,6 @@
 {
   "name": "@aaqu/fromcubes-portal-react",
-  "version": "0.1.0-alpha.29",
+  "version": "0.1.0-alpha.30",
   "description": "Fromcubes Portal - React for Node-RED with Tailwind CSS and auto complete",
   "type": "commonjs",
   "keywords": [
@@ -23,6 +23,7 @@
     "nodes/",
     "examples/",
     "README.md",
+    "AI-GUIDE.md",
     "LICENSE"
   ],
   "engines": {

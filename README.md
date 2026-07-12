@@ -1,10 +1,19 @@
 # @aaqu/fromcubes-portal-react
 
+[![npm version](https://img.shields.io/npm/v/%40aaqu%2Ffromcubes-portal-react.svg)](https://www.npmjs.com/package/@aaqu/fromcubes-portal-react)
+[![npm downloads](https://img.shields.io/npm/dm/%40aaqu%2Ffromcubes-portal-react.svg)](https://www.npmjs.com/package/@aaqu/fromcubes-portal-react)
+[![node](https://img.shields.io/node/v/%40aaqu%2Ffromcubes-portal-react.svg)](https://www.npmjs.com/package/@aaqu/fromcubes-portal-react)
+[![Node-RED](https://img.shields.io/badge/Node--RED-%E2%89%A5%204.0-8f0000.svg)](https://nodered.org)
+[![license](https://img.shields.io/npm/l/%40aaqu%2Ffromcubes-portal-react.svg)](./LICENSE)
+
+**📖 Documentation — step-by-step guide with screenshots:** [aaqu.github.io/fromcubes-portal-react](https://aaqu.github.io/fromcubes-portal-react/) — install → import → edit JSX → live dashboard, on one example.
+
 > **⚠️ Alpha Module** — This project is in early development. Expect breaking changes. Test on a clean Node-RED instance.
 
 A Node-RED node that turns any `/fromcubes/<sub-path>` URL into a React page. Write JSX in the editor, deploy, open the URL — your component talks to the flow over WebSocket. No build step, no browser compiler. All portal pages are served under the hardcoded `/fromcubes/` prefix so every node cleanly coexists under one URL tree.
 
 For internals, plugin authoring, and the deploy pipeline see [README-DEV.md](./README-DEV.md).
+Want an AI model to generate flows for you? Paste [AI-GUIDE.md](./AI-GUIDE.md) into it — a self-contained authoring contract (node types, flow-JSON fields, runtime API, rules, skeleton).
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L01UOFRG)
 
@@ -88,6 +97,7 @@ The opt-out is page-wide — the strictest call wins. If any component on the pa
 | Page Title | Browser tab title |
 | npm Packages | Comma-separated, e.g. `d3, three, @react-three/fiber` |
 | Portal Auth | Enable portal user header extraction (see Multi-user) |
+| Show WS status | Small "fromcubes • connected/disconnected" badge in the page's bottom-right corner (off by default) |
 | Head HTML | Extra trusted-author `<head>` tags (CDN, fonts, CSS, scripts). Runs in the public portal page. |
 | Code Editor | Monaco with JSX — must define `<App />` |
 
