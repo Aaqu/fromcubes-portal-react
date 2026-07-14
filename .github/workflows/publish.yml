@@ -48,15 +48,6 @@ jobs:
             echo "version_changed=false" >> $GITHUB_OUTPUT
           fi
 
-      # npm 11 no longer reads README.md into the publish manifest, so the
-      # registry packument (and flows.nodered.org, which renders it) would get
-      # an empty readme. Inject it explicitly just before publishing — CI-only,
-      # the committed package.json stays clean.
-      - name: Embed readme in manifest
-        if: steps.check.outputs.version_changed == 'true'
-        run: |
-          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.readme=fs.readFileSync('README.md','utf8');fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
-
       - name: Publish
         if: steps.check.outputs.version_changed == 'true'
         env:
@@ -64,7 +55,13 @@ jobs:
         run: |
           VERSION=$(jq -r .version package.json)
           if [[ "$VERSION" == *-alpha* ]]; then
-            npm publish --tag alpha --provenance
+            # Alpha releases are published straight to `latest` ON PURPOSE:
+            # the registry copies README into the packument only on a publish
+            # that sets the latest tag — `npm dist-tag add … latest` after the
+            # fact does NOT refresh it, which left the flows.nodered.org page
+            # (rendered from packument readme) empty. The alpha tag is added
+            # right after in the next step.
+            npm publish --tag latest --provenance
           elif [[ "$VERSION" == *-beta* ]]; then
             npm publish --tag beta --provenance
           elif [[ "$VERSION" == *-rc* ]]; then
@@ -73,7 +70,7 @@ jobs:
             npm publish --provenance
           fi
 
-      - name: Tag alpha as latest
+      - name: Add alpha dist-tag
         if: steps.check.outputs.version_changed == 'true'
         continue-on-error: true
         env:
@@ -81,7 +78,7 @@ jobs:
         run: |
           VERSION=$(jq -r .version package.json)
           if [[ "$VERSION" == *-alpha* ]]; then
-            npm dist-tag add @aaqu/fromcubes-portal-react@$VERSION latest
+            npm dist-tag add @aaqu/fromcubes-portal-react@$VERSION alpha
           fi
 
       - name: Create GitHub Release
