@@ -134,6 +134,7 @@ function App() {
 - **JSX tag completion** — type tag name, Tab to expand
 - **Self-close collapse** — type `/` inside empty `<tag></tag>` to convert to `<tag />`
 - **Ctrl+D / Cmd+D** — duplicate the current line or selection (in every Monaco editor of the package)
+- **Ctrl+/ / Cmd+/** — JSX-aware comment toggle. Style follows the first selected line (VS Code behavior): selecting a whole `return ( … )` block gives plain `//` on every line, while lines between live JSX tags are wrapped in `{/* … */}` (a plain `//` there is literal text — JSX renders it on the page)
 - **Component completion** — registry components + any PascalCase word
 - **Utility-symbol completion** — top-level identifiers from any `fc-portal-utility` node, suggested in JS context
 - **Components / Utilities dialogs** — buttons in the JSX tab; Components inserts `<Tag></Tag>`, Utilities expands to the symbols declared in each node and inserts the bare identifier on click
