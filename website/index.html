@@ -5,6 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fromcubes-portal-react — React 19 dashboards for Node-RED</title>
 <meta name="description" content="Step-by-step guide: build a live React 19 dashboard in Node-RED with fromcubes-portal-react — JSX compiled server-side, Tailwind CSS 4, WebSocket data binding.">
+<link rel="canonical" href="https://aaqu.github.io/fromcubes-portal-react/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="fromcubes-portal-react">
+<meta property="og:title" content="fromcubes-portal-react — React 19 dashboards for Node-RED">
+<meta property="og:description" content="Step-by-step guide: build a live React 19 dashboard in Node-RED — JSX compiled server-side, Tailwind CSS 4, WebSocket data binding.">
+<meta property="og:url" content="https://aaqu.github.io/fromcubes-portal-react/">
+<meta property="og:image" content="https://aaqu.github.io/fromcubes-portal-react/img/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="fromcubes-portal-react — React 19 dashboards for Node-RED">
+<meta name="twitter:description" content="Live React dashboards inside Node-RED — no build step, no browser compiler.">
+<meta name="twitter:image" content="https://aaqu.github.io/fromcubes-portal-react/img/og-image.png">
 <style>
   :root {
     --bg: #0b0b0d;
@@ -69,9 +82,11 @@
   .btn.primary:hover { filter: brightness(1.08); }
 
   .features {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    display: grid; grid-template-columns: repeat(3, 1fr);
     gap: 14px; padding: 8px 0 40px;
   }
+  @media (max-width: 900px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
   .feature {
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 18px;
@@ -187,6 +202,7 @@
     <div class="cta">
       <a class="btn primary" href="#install">Get started</a>
       <a class="btn" href="https://github.com/Aaqu/fromcubes-portal-react">Source on GitHub</a>
+      <a class="btn" href="https://ko-fi.com/L4L01UOFRG">☕ Support on Ko-fi</a>
     </div>
   </div>
 
@@ -387,7 +403,8 @@ return msg;</pre>
     <div>© Aaqu — Apache-2.0. Built with fromcubes-portal-react itself: the dashboard above is a real, running flow.</div>
     <div>
       <a href="https://github.com/Aaqu/fromcubes-portal-react">GitHub</a> ·
-      <a href="https://www.npmjs.com/package/@aaqu/fromcubes-portal-react">npm</a>
+      <a href="https://www.npmjs.com/package/@aaqu/fromcubes-portal-react">npm</a> ·
+      <a href="https://ko-fi.com/L4L01UOFRG">Ko-fi</a>
     </div>
   </div>
 </footer>
