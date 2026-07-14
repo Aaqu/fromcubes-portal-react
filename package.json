@@ -32,9 +32,9 @@
   "dependencies": {
     "esbuild": "^0.28.1",
     "monaco-editor": "^0.55.1",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "tailwindcss": "^4.2.4"
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwindcss": "^4.3.2"
   },
   "peerDependencies": {
     "ws": "^8.21.0"
@@ -47,11 +47,11 @@
   "devDependencies": {
     "jsdoc": "^4.0.5",
     "jsdoc-plugin-typescript": "^3.2.1",
-    "node-red": "5.0.0",
+    "node-red": "5.0.1",
     "node-red-node-test-helper": "^0.3.4",
-    "prettier": "^3.8.3",
+    "prettier": "^3.9.5",
     "supertest": "^7.2.2",
-    "vitest": "^4.1.6",
+    "vitest": "^4.1.10",
     "ws": "^8.21.0"
   },
   "overrides": {
