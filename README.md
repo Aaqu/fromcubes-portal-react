@@ -13,7 +13,6 @@
 A Node-RED node that turns any `/fromcubes/<sub-path>` URL into a React page. Write JSX in the editor, deploy, open the URL — your component talks to the flow over WebSocket. No build step, no browser compiler. All portal pages are served under the hardcoded `/fromcubes/` prefix so every node cleanly coexists under one URL tree.
 
 For internals, plugin authoring, and the deploy pipeline see [README-DEV.md](./README-DEV.md).
-Want an AI model to generate flows for you? Paste [AI-GUIDE.md](./AI-GUIDE.md) into it — a self-contained authoring contract (node types, flow-JSON fields, runtime API, rules, skeleton).
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L01UOFRG)
 
@@ -129,9 +128,10 @@ function App() {
 ## Editor features
 
 - **Monaco** with full JSX support and `useNodeRed()` type declarations
-- **Tailwind CSS autocompletion** inside `className="..."` (~19k utility classes)
+- **Tailwind CSS autocompletion** inside `className="..."` (~19k utility classes). Classes must be complete literals in a string — dynamic `bg-${tone}-500` generates no CSS (use a map of full classes). Arbitrary values incl. `w-[calc(100%-2rem)]`, `grid-cols-[repeat(2,1fr)]`, `mt-0!` and `@md:flex` are supported.
 - **JSX tag completion** — type tag name, Tab to expand
 - **Self-close collapse** — type `/` inside empty `<tag></tag>` to convert to `<tag />`
+- **Ctrl+D / Cmd+D** — duplicate the current line or selection (in every Monaco editor of the package)
 - **Component completion** — registry components + any PascalCase word
 - **Utility-symbol completion** — top-level identifiers from any `fc-portal-utility` node, suggested in JS context
 - **Components / Utilities dialogs** — buttons in the JSX tab; Components inserts `<Tag></Tag>`, Utilities expands to the symbols declared in each node and inserts the bare identifier on click

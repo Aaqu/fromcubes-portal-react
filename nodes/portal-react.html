@@ -447,6 +447,23 @@
         console.log(PREFIX, "self-close collapse attached to editor");
       };
 
+      // Custom keybindings shared by every Monaco instance in this package.
+      // Ctrl+D (Cmd+D on macOS) duplicates the current line / selection by
+      // delegating to Monaco's built-in copyLinesDownAction (multi-cursor
+      // aware, single undo step). Overrides Monaco's default Ctrl+D
+      // ("Add Selection To Next Find Match") on purpose.
+      window.__fcAttachKeybindings = function (editor) {
+        editor.addAction({
+          id: "fc-duplicate-line",
+          label: "Duplicate Line/Selection",
+          keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyD],
+          run: function (ed) {
+            const action = ed.getAction("editor.action.copyLinesDownAction");
+            if (action) action.run();
+          },
+        });
+      };
+
       /**
        * Fetch the current component registry from `/portal-react/registry`
        * and stash the names on `window.__fcComponentNames` so the JSX-tag
@@ -829,6 +846,8 @@
             document.getElementById("fcc-monaco"),
             Object.assign({ model: compModel }, window.__fcEditorOpts),
           );
+          if (window.__fcAttachKeybindings)
+            window.__fcAttachKeybindings(compEditorInstance);
           console.log("[FC-Monaco] COMP: editor created");
 
           // Log markers after a short delay (diagnostics are async)
@@ -1097,6 +1116,8 @@
             document.getElementById("fcu-monaco"),
             Object.assign({ model: utilModel }, window.__fcEditorOpts),
           );
+          if (window.__fcAttachKeybindings)
+            window.__fcAttachKeybindings(utilEditorInstance);
         });
       },
 
@@ -1580,6 +1601,8 @@ function useDebounce(value, ms = 300) {
           console.log("[FC-Monaco] PORTAL: JSX editor created");
           if (window.__fcAttachSelfClose)
             window.__fcAttachSelfClose(editorInstance);
+          if (window.__fcAttachKeybindings)
+            window.__fcAttachKeybindings(editorInstance);
 
           const headUri = monaco.Uri.parse(
             "file:///fc-head-" + node.id + ".html",
@@ -1591,6 +1614,8 @@ function useDebounce(value, ms = 300) {
             document.getElementById("fc-head-monaco"),
             Object.assign({ model: headModel }, opts),
           );
+          if (window.__fcAttachKeybindings)
+            window.__fcAttachKeybindings(headEditorInstance);
           console.log("[FC-Monaco] PORTAL: Head editor created");
 
           // Log markers after a short delay (diagnostics are async)

@@ -493,6 +493,8 @@ module.exports = function (RED) {
     isSafeName,
     validateSubPath,
     findMissingComponentRefs,
+    extractImports,
+    checkAppCode,
     identifierRe,
     userDir,
     readCachedJS,
@@ -880,14 +882,18 @@ module.exports = function (RED) {
           .map((n) => `// Utility: ${n}\n${utilities[n].code}`)
           .join("\n\n");
 
-        // Extract import statements from library/utility/user code so they appear at top level
-        const importRe = /^import\s+.+?from\s+['"].+?['"];?\s*$/gm;
-        const libImports = libraryJsx.match(importRe) || [];
-        const userImports = componentCode.match(importRe) || [];
-        const utilImports = utilityJsx.match(importRe) || [];
-        const cleanLibJsx = libraryJsx.replace(importRe, "").trim();
-        const cleanCompCode = componentCode.replace(importRe, "").trim();
-        const cleanUtilJsx = utilityJsx.replace(importRe, "").trim();
+        // Extract import statements from library/utility/user code so they
+        // appear at top level. Comment-aware: an import inside a `//` or
+        // `/* */` comment stays where it is instead of being hoisted live.
+        const libExtract = extractImports(libraryJsx);
+        const userExtract = extractImports(componentCode);
+        const utilExtract = extractImports(utilityJsx);
+        const libImports = libExtract.imports;
+        const userImports = userExtract.imports;
+        const utilImports = utilExtract.imports;
+        const cleanLibJsx = libExtract.clean;
+        const cleanCompCode = userExtract.clean;
+        const cleanUtilJsx = utilExtract.clean;
 
         // ── Check: JSX references a PascalCase tag with no definition ──
         // Catches the common foot-gun where a portal references a shared
@@ -1014,27 +1020,10 @@ module.exports = function (RED) {
         }
 
         // ── Check: App definition + missing return ──
-        const hasAppDefinition =
-          /\b(?:export\s+default\s+)?function\s+App\s*\(/.test(cleanCompCode) ||
-          /\bclass\s+App\b/.test(cleanCompCode) ||
-          /\b(?:const|let|var)\s+App\s*=/.test(cleanCompCode);
-
-        let missingReturn = false;
-        const appFnMatch = cleanCompCode.match(
-          /(?:export\s+default\s+)?function\s+App\s*\([^)]*\)\s*\{/,
-        );
-        if (appFnMatch) {
-          let depth = 1, i = appFnMatch.index + appFnMatch[0].length;
-          let hasReturn = false;
-          while (i < cleanCompCode.length && depth > 0) {
-            const ch = cleanCompCode[i];
-            if (ch === "{") depth++;
-            else if (ch === "}") depth--;
-            else if (cleanCompCode.slice(i, i + 7) === "return ") hasReturn = true;
-            i++;
-          }
-          missingReturn = !hasReturn;
-        }
+        // Comment-aware: `// function App()` is not a definition and a
+        // commented `// return …` inside App does not count as a return.
+        const { hasApp: hasAppDefinition, missingReturn } =
+          checkAppCode(cleanCompCode);
 
         // ── Resolve compiled (success or unified error) ──
         let compiled;
