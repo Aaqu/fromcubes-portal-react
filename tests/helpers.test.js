@@ -10,6 +10,9 @@ const {
   validateSubPath,
   quickCheckSyntax,
   findMissingComponentRefs,
+  stripComments,
+  extractImports,
+  checkAppCode,
   serveableHash,
   hasFreshBuild,
   identifierRe,
@@ -254,6 +257,228 @@ describe("findMissingComponentRefs", () => {
       "}",
     ].join("\n");
     expect(findMissingComponentRefs(code, new Set())).toEqual(new Set());
+  });
+
+  it("does not flag a tag used only inside a JSX block comment", () => {
+    const code = [
+      "function App(){",
+      "  return (",
+      "    <div>",
+      "      {/* <Gauge value={1}/> */}",
+      "      <p>hello</p>",
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    expect(findMissingComponentRefs(code, new Set())).toEqual(new Set());
+  });
+
+  it("does not flag a tag used only in a // line comment", () => {
+    const code = [
+      "function App(){",
+      "  // <Gauge value={1}/>",
+      "  return <div/>;",
+      "}",
+    ].join("\n");
+    expect(findMissingComponentRefs(code, new Set())).toEqual(new Set());
+  });
+
+  it("still flags a live tag when another usage is commented out", () => {
+    const code = [
+      "function App(){",
+      "  // <Gauge value={1}/>",
+      "  return <Gauge value={2}/>;",
+      "}",
+    ].join("\n");
+    expect(findMissingComponentRefs(code, new Set())).toEqual(
+      new Set(["Gauge"]),
+    );
+  });
+
+  it("flags a tag whose only definition is commented out", () => {
+    const code = [
+      "// const Gauge = () => null;",
+      "function App(){ return <Gauge/>; }",
+    ].join("\n");
+    expect(findMissingComponentRefs(code, new Set())).toEqual(
+      new Set(["Gauge"]),
+    );
+  });
+
+  it("does not treat a tag inside a string as a usage", () => {
+    const code =
+      'function App(){ const s = "see <Gauge/> docs at https://x"; return <div>{s}</div>; }';
+    // The scan blanks string interiors, so <Gauge/> inside the string is not
+    // a JSX usage.
+    expect(findMissingComponentRefs(code, new Set())).toEqual(new Set());
+  });
+});
+
+describe("stripComments", () => {
+  it("blanks // line comments but keeps the newline", () => {
+    const out = stripComments("const a = 1; // note\nconst b = 2;");
+    expect(out).toContain("const a = 1;");
+    expect(out).toContain("const b = 2;");
+    expect(out).not.toContain("note");
+    expect(out.length).toBe("const a = 1; // note\nconst b = 2;".length);
+  });
+
+  it("blanks /* */ block comments across lines, preserving line count", () => {
+    const src = "a\n/*\nx\ny\n*/\nb";
+    const out = stripComments(src);
+    expect(out.split("\n").length).toBe(src.split("\n").length);
+    expect(out).not.toContain("x");
+    expect(out).toContain("a");
+    expect(out).toContain("b");
+  });
+
+  it("blanks JSX comments {/* … */}", () => {
+    const out = stripComments("<div>{/* <Gauge/> */}</div>");
+    expect(out).not.toContain("Gauge");
+    expect(out).toContain("<div>{");
+    expect(out).toContain("}</div>");
+  });
+
+  it("does not treat // inside a string as a comment", () => {
+    const src = 'const url = "https://example.com"; // real';
+    const out = stripComments(src);
+    expect(out).toContain("https://example.com");
+    expect(out).not.toContain("real");
+  });
+
+  it("does not treat /* inside a template literal as a comment", () => {
+    const src = "const t = `/* not a comment */`; /* yes */";
+    const out = stripComments(src);
+    expect(out).toContain("/* not a comment */");
+    expect(out).not.toContain("yes");
+  });
+
+  it("handles escaped quotes inside strings", () => {
+    const src = 'const s = "a \\" b // still string"; // gone';
+    const out = stripComments(src);
+    expect(out).toContain('a \\" b // still string');
+    expect(out).not.toContain("gone");
+  });
+
+  it("returns '' for empty / non-string input", () => {
+    expect(stripComments("")).toBe("");
+    expect(stripComments(null)).toBe("");
+    expect(stripComments(undefined)).toBe("");
+  });
+
+  it("preserves offsets exactly (same length output)", () => {
+    const src = "let x = 1; /* c */ let y = 2; // d";
+    expect(stripComments(src).length).toBe(src.length);
+  });
+});
+
+describe("extractImports", () => {
+  it("hoists a live import and removes it from clean code", () => {
+    const { imports, clean } = extractImports(
+      "import * as d3 from 'd3';\nfunction App(){ return <div/>; }",
+    );
+    expect(imports).toEqual(["import * as d3 from 'd3';"]);
+    expect(clean).toBe("function App(){ return <div/>; }");
+  });
+
+  it("does not hoist an import inside a // line comment", () => {
+    const { imports, clean } = extractImports(
+      "// import * as d3 from 'd3';\nfunction App(){ return <div/>; }",
+    );
+    expect(imports).toEqual([]);
+    expect(clean).toContain("// import * as d3 from 'd3';");
+  });
+
+  it("does not hoist an import inside a /* */ block comment", () => {
+    const code = [
+      "/*",
+      "import Chart from 'chart.js/auto';",
+      "*/",
+      "function App(){ return <div/>; }",
+    ].join("\n");
+    const { imports, clean } = extractImports(code);
+    expect(imports).toEqual([]);
+    expect(clean).toContain("import Chart from 'chart.js/auto';");
+    expect(clean).toContain("/*");
+    expect(clean).toContain("*/");
+  });
+
+  it("hoists live imports while leaving a commented duplicate in place", () => {
+    const code = [
+      "import Chart from 'chart.js/auto';",
+      "// import Chart from 'chart.js/auto';",
+      "function App(){ return <div/>; }",
+    ].join("\n");
+    const { imports, clean } = extractImports(code);
+    expect(imports).toEqual(["import Chart from 'chart.js/auto';"]);
+    expect(clean).toContain("// import Chart from 'chart.js/auto';");
+    expect(clean.indexOf("import Chart")).toBe(
+      clean.lastIndexOf("import Chart"),
+    );
+  });
+
+  it("extracts multiple imports in source order", () => {
+    const code = [
+      "import { Canvas } from '@react-three/fiber';",
+      "import { OrbitControls } from '@react-three/drei';",
+      "function App(){ return <Canvas/>; }",
+    ].join("\n");
+    const { imports } = extractImports(code);
+    expect(imports).toEqual([
+      "import { Canvas } from '@react-three/fiber';",
+      "import { OrbitControls } from '@react-three/drei';",
+    ]);
+  });
+
+  it("handles empty / non-string input safely", () => {
+    expect(extractImports("")).toEqual({ imports: [], clean: "" });
+    expect(extractImports(null)).toEqual({ imports: [], clean: "" });
+  });
+});
+
+describe("checkAppCode", () => {
+  it("detects function App with return", () => {
+    expect(checkAppCode("function App(){ return <div/>; }")).toEqual({
+      hasApp: true,
+      missingReturn: false,
+    });
+  });
+
+  it("flags function App without return", () => {
+    expect(checkAppCode("function App(){ const x = 1; }")).toEqual({
+      hasApp: true,
+      missingReturn: true,
+    });
+  });
+
+  it("a commented-out return does not count", () => {
+    const code = ["function App(){", "  // return <div/>;", "}"].join("\n");
+    expect(checkAppCode(code)).toEqual({ hasApp: true, missingReturn: true });
+  });
+
+  it("a commented-out App definition does not count", () => {
+    expect(checkAppCode("// function App(){ return <div/>; }")).toEqual({
+      hasApp: false,
+      missingReturn: false,
+    });
+  });
+
+  it("accepts const App arrow form without return analysis", () => {
+    expect(checkAppCode("const App = () => <div/>;")).toEqual({
+      hasApp: true,
+      missingReturn: false,
+    });
+  });
+
+  it("return inside a nested block-commented region does not count", () => {
+    const code = [
+      "function App(){",
+      "  /*",
+      "  if (x) return <div/>;",
+      "  */",
+      "}",
+    ].join("\n");
+    expect(checkAppCode(code)).toEqual({ hasApp: true, missingReturn: true });
   });
 });
 

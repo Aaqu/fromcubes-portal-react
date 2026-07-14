@@ -346,6 +346,166 @@ function identifierRe(name) {
 }
 
 /**
+ * Replace every `//` and `/* *​/` comment in `code` with spaces, leaving
+ * strings, template literals, and newlines untouched. Output has exactly the
+ * same length and line structure as the input, so match offsets and line
+ * numbers computed against the stripped text are valid in the original.
+ *
+ * Used by every regex-based code scan (missing-component preflight, import
+ * hoisting, App/return detection) so commented-out code is invisible to
+ * them: a commented `<Gauge/>` must not fail the deploy with `missing:
+ * Gauge`, and an `import` inside a block comment must not be hoisted into
+ * the live bundle.
+ *
+ * Regex literals are not tracked — an unescaped `//` inside a character
+ * class (`/[//]/`) is misread as a comment. The scans this feeds are
+ * advisory, and esbuild always parses the original source, so the worst
+ * case is a skipped preflight warning.
+ *
+ * @param {string} code
+ * @param {boolean} [blankStrings=false]  Also blank the interior of string
+ *     and template literals (quotes stay). Used by scans where text inside a
+ *     string must not look like code — e.g. `"see <Gauge/>"` is not a JSX
+ *     usage.
+ * @returns {string}  Same-length text with comment bodies blanked.
+ */
+function stripComments(code, blankStrings = false) {
+  if (!code || typeof code !== "string") return "";
+  const out = code.split("");
+  const n = code.length;
+  let state = null; // null | '"' | "'" | '`' | 'line' | 'block'
+  let i = 0;
+  while (i < n) {
+    const c = code[i];
+    const d = i + 1 < n ? code[i + 1] : "";
+    if (state === null) {
+      if (c === '"' || c === "'" || c === "`") {
+        state = c;
+      } else if (c === "/" && d === "/") {
+        state = "line";
+        out[i] = out[i + 1] = " ";
+        i += 2;
+        continue;
+      } else if (c === "/" && d === "*") {
+        state = "block";
+        out[i] = out[i + 1] = " ";
+        i += 2;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (state === "line") {
+      if (c === "\n") state = null;
+      else out[i] = " ";
+      i++;
+      continue;
+    }
+    if (state === "block") {
+      if (c === "*" && d === "/") {
+        out[i] = out[i + 1] = " ";
+        state = null;
+        i += 2;
+        continue;
+      }
+      if (c !== "\n") out[i] = " ";
+      i++;
+      continue;
+    }
+    // inside a string / template literal
+    if (c === "\\") {
+      if (blankStrings) {
+        out[i] = " ";
+        if (i + 1 < n && code[i + 1] !== "\n") out[i + 1] = " ";
+      }
+      i += 2;
+      continue;
+    }
+    if (c === state) {
+      state = null;
+    } else if (blankStrings && c !== "\n") {
+      out[i] = " ";
+    }
+    i++;
+    continue;
+  }
+  return out.join("");
+}
+
+// Trailing whitespace must stay inside the line ([^\S\r\n], not \s): ranges
+// are computed on comment-stripped text and sliced out of the original, so a
+// match crossing the newline would swallow whatever the next line holds.
+const IMPORT_RE = /^import\s+.+?from\s+['"].+?['"];?[^\S\r\n]*$/gm;
+
+/**
+ * Extract top-level `import … from '…'` statements from `code`, ignoring
+ * any that sit inside comments. Matching runs against the comment-stripped
+ * text (same offsets as the original), so a commented-out import survives
+ * in place as an inert comment instead of being hoisted into the bundle.
+ *
+ * @param {string} code
+ * @returns {{imports: string[], clean: string}}  The live import statements
+ *     in source order, and `code` with exactly those ranges removed
+ *     (trimmed).
+ */
+function extractImports(code) {
+  if (!code || typeof code !== "string") return { imports: [], clean: "" };
+  const stripped = stripComments(code);
+  const imports = [];
+  const ranges = [];
+  IMPORT_RE.lastIndex = 0;
+  let m;
+  while ((m = IMPORT_RE.exec(stripped)) !== null) {
+    imports.push(code.slice(m.index, m.index + m[0].length).trim());
+    ranges.push([m.index, m.index + m[0].length]);
+  }
+  let clean = "";
+  let last = 0;
+  for (const [s, e] of ranges) {
+    clean += code.slice(last, s);
+    last = e;
+  }
+  clean += code.slice(last);
+  return { imports, clean: clean.trim() };
+}
+
+/**
+ * Detect whether `code` defines an `App` component and, for the
+ * `function App() { … }` form, whether its body contains a `return`.
+ * Comments are stripped first, so `// return null` inside the body or a
+ * commented-out `function App()` do not count.
+ *
+ * @param {string} code  User JSX (imports may or may not be present).
+ * @returns {{hasApp: boolean, missingReturn: boolean}}
+ */
+function checkAppCode(code) {
+  const src = stripComments(code || "");
+  const hasApp =
+    /\b(?:export\s+default\s+)?function\s+App\s*\(/.test(src) ||
+    /\bclass\s+App\b/.test(src) ||
+    /\b(?:const|let|var)\s+App\s*=/.test(src);
+
+  let missingReturn = false;
+  const appFnMatch = src.match(
+    /(?:export\s+default\s+)?function\s+App\s*\([^)]*\)\s*\{/,
+  );
+  if (appFnMatch) {
+    let depth = 1;
+    let i = appFnMatch.index + appFnMatch[0].length;
+    let hasReturn = false;
+    while (i < src.length && depth > 0) {
+      const ch = src[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+      else if (src.slice(i, i + 7) === "return ") hasReturn = true;
+      i++;
+    }
+    missingReturn = !hasReturn;
+  }
+  return { hasApp, missingReturn };
+}
+
+/**
  * Find PascalCase JSX tags in `userCode` that have no visible definition.
  *
  * Used at deploy time to catch the case where a portal references a shared
@@ -369,17 +529,22 @@ function findMissingComponentRefs(userCode, knownNames) {
   if (!userCode || typeof userCode !== "string") return new Set();
   const known = knownNames instanceof Set ? knownNames : new Set();
 
+  // Scan with comments AND string interiors blanked: a commented-out <Tag/>
+  // is not a usage, a commented-out `const Tag = …` is not a definition, and
+  // `"see <Tag/> in the docs"` is neither.
+  const src = stripComments(userCode, true);
+
   PASCAL_TAG_RE.lastIndex = 0;
   const used = new Set();
   let m;
-  while ((m = PASCAL_TAG_RE.exec(userCode)) !== null) used.add(m[1]);
+  while ((m = PASCAL_TAG_RE.exec(src)) !== null) used.add(m[1]);
 
   const missing = new Set();
   for (const name of used) {
     if (REACT_BUILTIN_TAGS.has(name)) continue;
     if (known.has(name)) continue;
     const escaped = name.replace(RE_ESCAPE, "\\$&");
-    const stripped = userCode.replace(
+    const stripped = src.replace(
       new RegExp(`<\\s*/?\\s*${escaped}\\b`, "g"),
       "",
     );
@@ -475,6 +640,9 @@ module.exports.quickCheckSyntax = quickCheckSyntax;
 module.exports.formatEsbuildError = formatEsbuildError;
 module.exports.extractPortalUser = extractPortalUser;
 module.exports.findMissingComponentRefs = findMissingComponentRefs;
+module.exports.stripComments = stripComments;
+module.exports.extractImports = extractImports;
+module.exports.checkAppCode = checkAppCode;
 module.exports.identifierRe = identifierRe;
 module.exports.serveableHash = serveableHash;
 module.exports.hasFreshBuild = hasFreshBuild;
@@ -710,6 +878,9 @@ function createHelpers(RED) {
     isSafeName,
     validateSubPath,
     findMissingComponentRefs,
+    stripComments,
+    extractImports,
+    checkAppCode,
     identifierRe,
     pkgRoot,
     userDir,
