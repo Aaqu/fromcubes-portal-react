@@ -128,7 +128,7 @@ function App() {
 ## Editor features
 
 - **Monaco** with full JSX support and `useNodeRed()` type declarations
-- **Tailwind CSS autocompletion** inside `className="..."` (~19k utility classes)
+- **Tailwind CSS autocompletion** inside `className="..."` (~19k utility classes). Classes must be complete literals in a string — dynamic `bg-${tone}-500` generates no CSS (use a map of full classes). Arbitrary values incl. `w-[calc(100%-2rem)]`, `grid-cols-[repeat(2,1fr)]`, `mt-0!` and `@md:flex` are supported.
 - **JSX tag completion** — type tag name, Tab to expand
 - **Self-close collapse** — type `/` inside empty `<tag></tag>` to convert to `<tag />`
 - **Ctrl+D / Cmd+D** — duplicate the current line or selection (in every Monaco editor of the package)

@@ -54,6 +54,14 @@ function hash(str) {
 const twCompile = require("tailwindcss").compile;
 const CANDIDATE_RE = /[a-zA-Z0-9_\-:.\/\[\]#%]+/g;
 
+// Contents of "…", '…' and `…` literals in the scanned source. Tailwind
+// classes live inside string literals, and splitting THOSE on whitespace
+// keeps arbitrary values with `(`, `)`, `,`, `!`, `@`, `'` intact — chars
+// CANDIDATE_RE cannot include globally without gluing candidates to
+// surrounding code (`className="w-…`). Single regex alternation, escape-aware.
+const STRING_LITERAL_RE =
+  /"([^"\\\n]*(?:\\.[^"\\\n]*)*)"|'([^'\\\n]*(?:\\.[^'\\\n]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`/g;
+
 let twCompiled = null;
 /**
  * Lazily compile the Tailwind base stylesheet. Result is memoized at module
@@ -91,8 +99,18 @@ async function getTwCompiled() {
 async function generateCSS(source) {
   const cssHash = hash(source);
   const compiled = await getTwCompiled();
-  const candidates = [...new Set(source.match(CANDIDATE_RE) || [])];
-  const css = compiled.build(candidates);
+  const candidates = new Set(source.match(CANDIDATE_RE) || []);
+  // Second pass: whitespace-split string-literal contents so arbitrary
+  // values like w-[calc(100%-2rem)], grid-cols-[repeat(2,1fr)], mt-0! and
+  // @md:flex survive as single candidates. Tailwind ignores candidates that
+  // don't parse as utilities, so the extra tokens are harmless.
+  STRING_LITERAL_RE.lastIndex = 0;
+  let m;
+  while ((m = STRING_LITERAL_RE.exec(source)) !== null) {
+    const body = m[1] ?? m[2] ?? m[3] ?? "";
+    for (const tok of body.split(/\s+/)) if (tok) candidates.add(tok);
+  }
+  const css = compiled.build([...candidates]);
   return { css, cssHash };
 }
 
@@ -635,6 +653,7 @@ module.exports = function (RED) {
 };
 
 module.exports.validateSubPath = validateSubPath;
+module.exports.generateCSS = generateCSS;
 module.exports.isSafeName = isSafeName;
 module.exports.quickCheckSyntax = quickCheckSyntax;
 module.exports.formatEsbuildError = formatEsbuildError;
