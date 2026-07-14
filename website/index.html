@@ -223,11 +223,17 @@
   <div class="wrap">
     <span class="step-tag"><span class="n">1</span> Install</span>
     <h2>Install the package in Node-RED</h2>
-    <p>Install into your Node-RED user directory (usually <code>~/.node-red</code>) and restart Node-RED. Requires Node-RED ≥ 4 and Node.js ≥ 18.5.</p>
+    <p>Requires Node-RED ≥ 4 and Node.js ≥ 18.5. Two ways to install — pick one:</p>
+    <p style="margin-top:20px"><strong>Option A — Palette Manager (no terminal needed).</strong> In the editor open <strong>Menu → Manage palette → Install</strong>, search for <code>fromcubes</code> and click <em>install</em> next to <code>@aaqu/fromcubes-portal-react</code>:</p>
+    <figure>
+      <a href="img/07-install-palette.png"><img src="img/07-install-palette.png" alt="Node-RED Manage palette Install tab with @aaqu/fromcubes-portal-react found in the catalogue" loading="lazy"></a>
+      <figcaption>Manage palette → Install: the package is in the Node-RED community catalogue.</figcaption>
+    </figure>
+    <p style="margin-top:26px"><strong>Option B — npm.</strong> Install into your Node-RED user directory (usually <code>~/.node-red</code>) and restart Node-RED:</p>
     <pre>cd ~/.node-red
 npm install @aaqu/fromcubes-portal-react
 <span class="c"># restart Node-RED afterwards</span></pre>
-    <p style="margin-top:16px">After the restart three new nodes appear in the palette under the <strong>fromcubes</strong> category: <code>portal react</code>, <code>react component</code> and <code>react utility</code>.</p>
+    <p style="margin-top:16px">Either way, three new nodes appear in the palette under the <strong>fromcubes</strong> category: <code>portal react</code>, <code>react component</code> and <code>react utility</code>.</p>
   </div>
 </section>
 
