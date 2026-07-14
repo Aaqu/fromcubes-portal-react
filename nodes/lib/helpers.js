@@ -363,17 +363,49 @@ function identifierRe(name) {
   return re;
 }
 
+// Keywords after which a `<` starts a JSX element even though the preceding
+// significant character is a letter (`return <div/>` vs the comparison
+// `a < b`). Used by the JSX-context tracking in stripComments.
+const JSX_PREFIX_KEYWORDS = new Set([
+  "return",
+  "case",
+  "typeof",
+  "do",
+  "else",
+  "void",
+  "yield",
+  "await",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "throw",
+  "instanceof",
+]);
+
 /**
  * Replace every `//` and `/* *​/` comment in `code` with spaces, leaving
- * strings, template literals, and newlines untouched. Output has exactly the
- * same length and line structure as the input, so match offsets and line
- * numbers computed against the stripped text are valid in the original.
+ * strings, template literals, newlines — and JSX text — untouched. Output
+ * has exactly the same length and line structure as the input, so match
+ * offsets and line numbers computed against the stripped text are valid in
+ * the original.
+ *
+ * JSX-aware, matching esbuild's semantics: between JSX tags (children
+ * context) `//` and `/* *​/` are literal text, NOT comments — esbuild
+ * renders them — so they are left in place and any `<Tag/>` after them
+ * stays visible to the scans. Comments are only stripped in real JS
+ * contexts: top-level code, `{…}` expressions inside JSX, and inside
+ * opening tags between attributes (where esbuild does allow comments).
+ * `{/* … *​/}` in children is a `{…}` expression holding a block comment,
+ * so its body is blanked as before.
  *
  * Used by every regex-based code scan (missing-component preflight, import
  * hoisting, App/return detection) so commented-out code is invisible to
- * them: a commented `<Gauge/>` must not fail the deploy with `missing:
- * Gauge`, and an `import` inside a block comment must not be hoisted into
- * the live bundle.
+ * them — and NOT-commented-out code (like `// <Gauge/>` in children, which
+ * esbuild treats as text plus a live element) stays visible.
+ *
+ * The Monaco Ctrl+/ handler in portal-react.html carries a client-side
+ * mirror of this scanner (`__fcJsxContextAt`) — keep the two in sync.
  *
  * Regex literals are not tracked — an unescaped `//` inside a character
  * class (`/[//]/`) is misread as a comment. The scans this feeds are
@@ -384,68 +416,220 @@ function identifierRe(name) {
  * @param {boolean} [blankStrings=false]  Also blank the interior of string
  *     and template literals (quotes stay). Used by scans where text inside a
  *     string must not look like code — e.g. `"see <Gauge/>"` is not a JSX
- *     usage.
+ *     usage. JSX children text is not a string literal and is never blanked.
  * @returns {string}  Same-length text with comment bodies blanked.
  */
 function stripComments(code, blankStrings = false) {
   if (!code || typeof code !== "string") return "";
   const out = code.split("");
   const n = code.length;
-  let state = null; // null | '"' | "'" | '`' | 'line' | 'block'
+
+  // Frame stack tracking JSX context; the bottom frame is plain JS:
+  //   { t: "js", depth }  – JS code / `{…}` expression inside JSX
+  //                         (depth = open braces inside this frame)
+  //   { t: "tag", slash } – inside an opening tag `<Tag …>` (slash = last
+  //                         significant char was "/", i.e. self-closing)
+  //   { t: "children" }   – between `<Tag…>` and `</Tag>`: JSX text
+  const stack = [{ t: "js", depth: 0 }];
+
+  // Lookbehind for js frames, used to decide whether `<` starts JSX.
+  let prev = ""; // last significant char
+  let prev2 = ""; // significant char before prev
+  let word = ""; // identifier ending at prev ("" when prev is not ident)
+  let prevIdent = false; // was the immediately preceding raw char ident?
+
+  const IDENT_CH = /[A-Za-z0-9_$]/;
+
+  function sig(ch) {
+    prev2 = prev;
+    prev = ch;
+    if (IDENT_CH.test(ch)) {
+      word = prevIdent ? word + ch : ch;
+      prevIdent = true;
+    } else {
+      word = "";
+      prevIdent = false;
+    }
+  }
+
+  function startsJsx(next) {
+    if (!/[A-Za-z_$>]/.test(next)) return false; // <ident, </? no, <> fragment yes
+    if (prev === "") return true;
+    if (prev === "<") return false; // `a << b`
+    if (/[A-Za-z0-9_$)\]}"'`]/.test(prev))
+      return JSX_PREFIX_KEYWORDS.has(word); // `return <div/>` vs `a < b`
+    if (prev === ">") return prev2 === "="; // arrow `=> <div/>`
+    return true; // ( , ? : = & | [ { ; ! …
+  }
+
+  // A complete JSX element that closes back into a js frame is an
+  // expression — mark the lookbehind expression-ish so a following `<`
+  // reads as a comparison, not a new element.
+  function poppedIntoJs() {
+    if (stack[stack.length - 1].t === "js") {
+      prev = ")";
+      prev2 = "";
+      word = "";
+      prevIdent = false;
+    }
+  }
+
+  function blankLineComment() {
+    out[i] = out[i + 1] = " ";
+    i += 2;
+    while (i < n && code[i] !== "\n") {
+      out[i] = " ";
+      i++;
+    }
+  }
+
+  function blankBlockComment() {
+    out[i] = out[i + 1] = " ";
+    i += 2;
+    while (i < n && !(code[i] === "*" && code[i + 1] === "/")) {
+      if (code[i] !== "\n") out[i] = " ";
+      i++;
+    }
+    if (i < n) {
+      out[i] = out[i + 1] = " ";
+      i += 2;
+    }
+  }
+
+  function enterExpr() {
+    stack.push({ t: "js", depth: 0 });
+    prev = "";
+    prev2 = "";
+    word = "";
+    prevIdent = false;
+    i++;
+  }
+
   let i = 0;
   while (i < n) {
+    const top = stack[stack.length - 1];
     const c = code[i];
     const d = i + 1 < n ? code[i + 1] : "";
-    if (state === null) {
-      if (c === '"' || c === "'" || c === "`") {
-        state = c;
-      } else if (c === "/" && d === "/") {
-        state = "line";
-        out[i] = out[i + 1] = " ";
+
+    if (top.t === "children") {
+      if (c === "<" && d === "/") {
+        // closing tag — skip to ">" and leave the element
         i += 2;
-        continue;
-      } else if (c === "/" && d === "*") {
-        state = "block";
-        out[i] = out[i + 1] = " ";
-        i += 2;
+        while (i < n && code[i] !== ">") i++;
+        i++;
+        stack.pop();
+        poppedIntoJs();
         continue;
       }
+      if (c === "<" && /[A-Za-z_$>]/.test(d)) {
+        stack.push({ t: "tag", slash: false });
+        i++;
+        continue;
+      }
+      if (c === "{") {
+        enterExpr();
+        continue;
+      }
+      i++; // JSX text — `//`, `/*`, quotes are all literal content here
+      continue;
+    }
+
+    if (top.t === "tag") {
+      if (c === '"' || c === "'") {
+        // JSX attribute value — no escape processing in JSX strings
+        i++;
+        while (i < n && code[i] !== c) {
+          if (blankStrings && code[i] !== "\n") out[i] = " ";
+          i++;
+        }
+        i++;
+        top.slash = false;
+        continue;
+      }
+      if (c === "/" && d === "/") {
+        blankLineComment(); // comments between attributes are real comments
+        continue;
+      }
+      if (c === "/" && d === "*") {
+        blankBlockComment();
+        continue;
+      }
+      if (c === "{") {
+        enterExpr();
+        continue;
+      }
+      if (c === ">") {
+        const selfClose = top.slash;
+        stack.pop();
+        if (selfClose) poppedIntoJs();
+        else stack.push({ t: "children" });
+        i++;
+        continue;
+      }
+      if (!/\s/.test(c)) top.slash = c === "/";
       i++;
       continue;
     }
-    if (state === "line") {
-      if (c === "\n") state = null;
-      else out[i] = " ";
+
+    // js frame (top-level code or `{…}` expression inside JSX)
+    if (c === '"' || c === "'" || c === "`") {
+      const q = c;
+      i++;
+      while (i < n && code[i] !== q) {
+        if (code[i] === "\\") {
+          if (blankStrings) {
+            out[i] = " ";
+            if (i + 1 < n && code[i + 1] !== "\n") out[i + 1] = " ";
+          }
+          i += 2;
+          continue;
+        }
+        if (blankStrings && code[i] !== "\n") out[i] = " ";
+        i++;
+      }
+      i++;
+      sig(q);
+      continue;
+    }
+    if (c === "/" && d === "/") {
+      blankLineComment();
+      continue;
+    }
+    if (c === "/" && d === "*") {
+      blankBlockComment();
+      continue;
+    }
+    if (c === "{") {
+      top.depth++;
+      sig(c);
       i++;
       continue;
     }
-    if (state === "block") {
-      if (c === "*" && d === "/") {
-        out[i] = out[i + 1] = " ";
-        state = null;
-        i += 2;
+    if (c === "}") {
+      if (top.depth === 0 && stack.length > 1) {
+        stack.pop(); // end of `{…}` expression — back to tag/children
+        if (stack[stack.length - 1].t === "tag")
+          stack[stack.length - 1].slash = false;
+        i++;
         continue;
       }
-      if (c !== "\n") out[i] = " ";
+      if (top.depth > 0) top.depth--;
+      sig(c);
       i++;
       continue;
     }
-    // inside a string / template literal
-    if (c === "\\") {
-      if (blankStrings) {
-        out[i] = " ";
-        if (i + 1 < n && code[i + 1] !== "\n") out[i + 1] = " ";
-      }
-      i += 2;
+    if (c === "<" && startsJsx(d)) {
+      stack.push({ t: "tag", slash: false });
+      i++;
       continue;
     }
-    if (c === state) {
-      state = null;
-    } else if (blankStrings && c !== "\n") {
-      out[i] = " ";
+    if (/\s/.test(c)) {
+      prevIdent = false;
+      i++;
+      continue;
     }
+    sig(c);
     i++;
-    continue;
   }
   return out.join("");
 }

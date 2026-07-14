@@ -313,6 +313,19 @@ describe("findMissingComponentRefs", () => {
     // a JSX usage.
     expect(findMissingComponentRefs(code, new Set())).toEqual(new Set());
   });
+
+  it("treats // <Tag/> inside JSX children as a live usage", () => {
+    // Inside JSX children `//` is text, not a comment — esbuild renders the
+    // tag, so the preflight must demand its definition.
+    const code = [
+      "function App(){ return (<div>",
+      "  // <Gauge/>",
+      "</div>); }",
+    ].join("\n");
+    expect(findMissingComponentRefs(code, new Set())).toEqual(
+      new Set(["Gauge"]),
+    );
+  });
 });
 
 describe("stripComments", () => {
@@ -370,6 +383,60 @@ describe("stripComments", () => {
   it("preserves offsets exactly (same length output)", () => {
     const src = "let x = 1; /* c */ let y = 2; // d";
     expect(stripComments(src).length).toBe(src.length);
+  });
+
+  it("keeps // inside JSX children — esbuild renders it as text", () => {
+    const src = [
+      "function App(){ return (<Page>",
+      '  <Gauge value={s.humidity} label="Humidity" />',
+      '  // <Gauge value={s.pressure} label="Pressure" />',
+      "</Page>); }",
+    ].join("\n");
+    const out = stripComments(src);
+    // `//` between tags is JSX text, not a comment — the second Gauge is a
+    // live element and must stay visible to the scans.
+    expect(out).toContain('// <Gauge value={s.pressure} label="Pressure" />');
+  });
+
+  it("still strips // inside a {…} expression within JSX", () => {
+    const src = "<div>{ x /* gone */ } // stays\n</div>";
+    const out = stripComments(src);
+    expect(out).not.toContain("gone");
+    expect(out).toContain("// stays");
+  });
+
+  it("strips comments between attributes inside an opening tag", () => {
+    const src = '<Gauge // off\n  value={1} /* why */ label="x" />';
+    const out = stripComments(src);
+    expect(out).not.toContain("off");
+    expect(out).not.toContain("why");
+    expect(out).toContain('label="x"');
+  });
+
+  it("does not treat // inside a JSX attribute string as a comment", () => {
+    const src = '<a href="https://example.com">x</a>; // gone';
+    const out = stripComments(src);
+    expect(out).toContain("https://example.com");
+    expect(out).not.toContain("gone");
+  });
+
+  it("keeps /* */ inside JSX children — it is literal text", () => {
+    const out = stripComments("<div>/* text */</div>");
+    expect(out).toContain("/* text */");
+  });
+
+  it("strips comments in arrow bodies inside JSX expressions", () => {
+    const src = "<ul>{items.map((i) => /* gone */ <li>{i}</li>)}</ul>";
+    const out = stripComments(src);
+    expect(out).not.toContain("gone");
+    expect(out).toContain("<li>{i}</li>");
+  });
+
+  it("treats < after an identifier as comparison, not JSX", () => {
+    const src = "if (a < b) { f(); } // gone";
+    const out = stripComments(src);
+    expect(out).toContain("if (a < b) { f(); }");
+    expect(out).not.toContain("gone");
   });
 });
 

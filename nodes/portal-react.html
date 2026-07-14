@@ -447,11 +447,221 @@
         console.log(PREFIX, "self-close collapse attached to editor");
       };
 
+      /**
+       * Report the JSX context at `offset` in `code`. Client-side mirror of
+       * the JSX-aware scanner in lib/helpers.js (stripComments) — keep the
+       * two in sync.
+       *
+       *   "js"       – plain JS / `{…}` expression  → `//` comments work
+       *   "tag"      – inside an opening `<Tag …>`  → `//` comments work
+       *   "children" – between `<Tag…>` and `</Tag>` → only `{/* … *​/}`
+       *                works; `//` there is literal text that esbuild renders
+       *
+       * @param {string} code
+       * @param {number} offset
+       * @returns {"js"|"tag"|"children"}
+       */
+      window.__fcJsxContextAt = function (code, offset) {
+        const n = Math.min(code.length, offset);
+        const stack = [{ t: "js", depth: 0 }];
+        let prev = "";
+        let prev2 = "";
+        let word = "";
+        let prevIdent = false;
+        const IDENT_CH = /[A-Za-z0-9_$]/;
+        function sig(ch) {
+          prev2 = prev;
+          prev = ch;
+          if (IDENT_CH.test(ch)) {
+            word = prevIdent ? word + ch : ch;
+            prevIdent = true;
+          } else {
+            word = "";
+            prevIdent = false;
+          }
+        }
+        const KW = new Set([
+          "return",
+          "case",
+          "typeof",
+          "do",
+          "else",
+          "void",
+          "yield",
+          "await",
+          "in",
+          "of",
+          "new",
+          "delete",
+          "throw",
+          "instanceof",
+        ]);
+        function startsJsx(next) {
+          if (!/[A-Za-z_$>]/.test(next)) return false;
+          if (prev === "") return true;
+          if (prev === "<") return false;
+          if (/[A-Za-z0-9_$)\]}"'`]/.test(prev)) return KW.has(word);
+          if (prev === ">") return prev2 === "=";
+          return true;
+        }
+        function poppedIntoJs() {
+          if (stack[stack.length - 1].t === "js") {
+            prev = ")";
+            prev2 = "";
+            word = "";
+            prevIdent = false;
+          }
+        }
+        function enterExpr() {
+          stack.push({ t: "js", depth: 0 });
+          prev = "";
+          prev2 = "";
+          word = "";
+          prevIdent = false;
+          i++;
+        }
+        let i = 0;
+        while (i < n) {
+          const top = stack[stack.length - 1];
+          const c = code[i];
+          const d = i + 1 < code.length ? code[i + 1] : "";
+          if (top.t === "children") {
+            if (c === "<" && d === "/") {
+              i += 2;
+              while (i < code.length && code[i] !== ">") i++;
+              i++;
+              stack.pop();
+              poppedIntoJs();
+              continue;
+            }
+            if (c === "<" && /[A-Za-z_$>]/.test(d)) {
+              stack.push({ t: "tag", slash: false });
+              i++;
+              continue;
+            }
+            if (c === "{") {
+              enterExpr();
+              continue;
+            }
+            i++;
+            continue;
+          }
+          if (top.t === "tag") {
+            if (c === '"' || c === "'") {
+              i++;
+              while (i < code.length && code[i] !== c) i++;
+              i++;
+              top.slash = false;
+              continue;
+            }
+            if (c === "/" && d === "/") {
+              i += 2;
+              while (i < code.length && code[i] !== "\n") i++;
+              continue;
+            }
+            if (c === "/" && d === "*") {
+              i += 2;
+              while (
+                i < code.length &&
+                !(code[i] === "*" && code[i + 1] === "/")
+              )
+                i++;
+              i += 2;
+              continue;
+            }
+            if (c === "{") {
+              enterExpr();
+              continue;
+            }
+            if (c === ">") {
+              const selfClose = top.slash;
+              stack.pop();
+              if (selfClose) poppedIntoJs();
+              else stack.push({ t: "children" });
+              i++;
+              continue;
+            }
+            if (!/\s/.test(c)) top.slash = c === "/";
+            i++;
+            continue;
+          }
+          // js frame
+          if (c === '"' || c === "'" || c === "`") {
+            const q = c;
+            i++;
+            while (i < code.length && code[i] !== q) {
+              if (code[i] === "\\") i++;
+              i++;
+            }
+            i++;
+            sig(q);
+            continue;
+          }
+          if (c === "/" && d === "/") {
+            i += 2;
+            while (i < code.length && code[i] !== "\n") i++;
+            continue;
+          }
+          if (c === "/" && d === "*") {
+            i += 2;
+            while (
+              i < code.length &&
+              !(code[i] === "*" && code[i + 1] === "/")
+            )
+              i++;
+            i += 2;
+            continue;
+          }
+          if (c === "{") {
+            top.depth++;
+            sig(c);
+            i++;
+            continue;
+          }
+          if (c === "}") {
+            if (top.depth === 0 && stack.length > 1) {
+              stack.pop();
+              if (stack[stack.length - 1].t === "tag")
+                stack[stack.length - 1].slash = false;
+              i++;
+              continue;
+            }
+            if (top.depth > 0) top.depth--;
+            sig(c);
+            i++;
+            continue;
+          }
+          if (c === "<" && startsJsx(d)) {
+            stack.push({ t: "tag", slash: false });
+            i++;
+            continue;
+          }
+          if (/\s/.test(c)) {
+            prevIdent = false;
+            i++;
+            continue;
+          }
+          sig(c);
+          i++;
+        }
+        return stack[stack.length - 1].t;
+      };
+
       // Custom keybindings shared by every Monaco instance in this package.
+      //
       // Ctrl+D (Cmd+D on macOS) duplicates the current line / selection by
       // delegating to Monaco's built-in copyLinesDownAction (multi-cursor
       // aware, single undo step). Overrides Monaco's default Ctrl+D
       // ("Add Selection To Next Find Match") on purpose.
+      //
+      // Ctrl+/ (Cmd+/) toggles comments JSX-aware: Monaco's built-in
+      // commentLine blindly prefixes `//`, which inside JSX children is NOT
+      // a comment — esbuild renders it as literal text and the "commented"
+      // element stays live. The comment style for the whole selection comes
+      // from the FIRST selected line's context via __fcJsxContextAt:
+      // children → wrap each line in `{/* … *​/}`, JS / opening-tag
+      // attributes → `//`. Non-javascript models (the custom-head HTML
+      // editor) fall through to the built-in action.
       window.__fcAttachKeybindings = function (editor) {
         editor.addAction({
           id: "fc-duplicate-line",
@@ -460,6 +670,120 @@
           run: function (ed) {
             const action = ed.getAction("editor.action.copyLinesDownAction");
             if (action) action.run();
+          },
+        });
+        editor.addAction({
+          id: "fc-jsx-toggle-comment",
+          label: "Toggle Line Comment (JSX-aware)",
+          keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash],
+          run: function (ed) {
+            const model = ed.getModel();
+            if (!model) return;
+            if (model.getLanguageId() !== "javascript") {
+              const action = ed.getAction("editor.action.commentLine");
+              if (action) action.run();
+              return;
+            }
+            const lineNums = new Set();
+            (ed.getSelections() || []).forEach(function (sel) {
+              let end = sel.endLineNumber;
+              // a selection ending at column 1 does not include that line
+              if (end > sel.startLineNumber && sel.endColumn === 1) end--;
+              for (let l = sel.startLineNumber; l <= end; l++)
+                lineNums.add(l);
+            });
+            const text = model.getValue();
+            const lines = [];
+            lineNums.forEach(function (l) {
+              const content = model.getLineContent(l);
+              const t = content.trim();
+              if (!t) return;
+              const wrapped = t.startsWith("{/*") && t.endsWith("*/}");
+              const slashed = !wrapped && t.startsWith("//");
+              lines.push({
+                l: l,
+                content: content,
+                t: t,
+                wrapped: wrapped,
+                slashed: slashed,
+              });
+            });
+            if (!lines.length) return;
+            lines.sort(function (a, b) {
+              return a.l - b.l;
+            });
+            const uncomment = lines.every(function (x) {
+              return x.wrapped || x.slashed;
+            });
+            // Comment style comes from the FIRST selected line's context
+            // (VS Code behavior): a selection starting at `return (` is JS,
+            // so the whole block gets `//` — once the outer lines are
+            // commented the inner JSX never parses. Only a selection that
+            // STARTS between live tags needs `{/* … */}`.
+            // Markers are inserted at ONE column for the whole selection —
+            // the minimum indent across the selected lines — so they line
+            // up and each line keeps its own indentation after the marker.
+            let ctx = null;
+            let minIndent = 0;
+            if (!uncomment) {
+              const first = lines[0];
+              const firstIndent =
+                first.content.length - first.content.trimStart().length;
+              ctx = window.__fcJsxContextAt(
+                text,
+                model.getOffsetAt({
+                  lineNumber: first.l,
+                  column: firstIndent + 1,
+                }),
+              );
+              minIndent = Infinity;
+              lines.forEach(function (x) {
+                const ind = x.content.length - x.content.trimStart().length;
+                if (ind < minIndent) minIndent = ind;
+              });
+            }
+            const edits = [];
+            lines.forEach(function (x) {
+              let newText = null;
+              if (uncomment) {
+                const indent = x.content.slice(
+                  0,
+                  x.content.length - x.content.trimStart().length,
+                );
+                let inner;
+                if (x.wrapped) {
+                  inner = x.t.slice(3, -3);
+                  if (inner.startsWith(" ")) inner = inner.slice(1);
+                  if (inner.endsWith(" ")) inner = inner.slice(0, -1);
+                } else {
+                  inner = x.t.slice(2);
+                  if (inner.startsWith(" ")) inner = inner.slice(1);
+                }
+                newText = indent + inner;
+              } else if (!x.wrapped && !x.slashed) {
+                const head = x.content.slice(0, minIndent);
+                const rest = x.content.slice(minIndent);
+                newText =
+                  ctx === "children"
+                    ? head + "{/* " + rest + " */}"
+                    : head + "// " + rest;
+              }
+              if (newText !== null)
+                edits.push({
+                  range: new monaco.Range(
+                    x.l,
+                    1,
+                    x.l,
+                    model.getLineMaxColumn(x.l),
+                  ),
+                  text: newText,
+                  forceMoveMarkers: true,
+                });
+            });
+            if (!edits.length) return;
+            ed.pushUndoStop();
+            ed.executeEdits("fc-jsx-toggle-comment", edits);
+            ed.pushUndoStop();
           },
         });
       };
