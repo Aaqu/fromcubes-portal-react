@@ -70,8 +70,15 @@
     "url": "https://github.com/Aaqu/fromcubes-portal-react/issues"
   },
   "homepage": "https://aaqu.github.io/fromcubes-portal-react/",
+  "funding": {
+    "type": "ko-fi",
+    "url": "https://ko-fi.com/L4L01UOFRG"
+  },
   "license": "Apache-2.0",
-  "author": "aaqu",
+  "author": {
+    "name": "Aaqu",
+    "url": "https://github.com/Aaqu"
+  },
   "publishConfig": {
     "access": "public"
   }
