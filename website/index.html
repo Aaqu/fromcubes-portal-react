@@ -80,6 +80,8 @@
   .btn:hover { text-decoration: none; border-color: #3a3a42; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a1205; }
   .btn.primary:hover { filter: brightness(1.08); }
+  .btn.kofi { background: #ff5e5b; border-color: #ff5e5b; color: #fff; }
+  .btn.kofi:hover { filter: brightness(1.08); }
 
   .features {
     display: grid; grid-template-columns: repeat(3, 1fr);
@@ -202,7 +204,7 @@
     <div class="cta">
       <a class="btn primary" href="#install">Get started</a>
       <a class="btn" href="https://github.com/Aaqu/fromcubes-portal-react">Source on GitHub</a>
-      <a class="btn" href="https://ko-fi.com/L4L01UOFRG">☕ Support on Ko-fi</a>
+      <a class="btn kofi" href="https://ko-fi.com/L4L01UOFRG">☕ Support on Ko-fi</a>
     </div>
   </div>
 
@@ -297,7 +299,7 @@ return msg;</pre>
   <div class="wrap">
     <span class="step-tag"><span class="n">4</span> React code</span>
     <h2>Paste React straight into the node</h2>
-    <p>Double-click the <strong>Sensor Portal</strong> node. The <strong>JSX</strong> tab holds the page's <code>App()</code> component in a Monaco editor with JSX highlighting, Tailwind class completion and tag completion for your shared components. The <strong>URL sub-path</strong> field (here <code>sensors</code>) decides where the page is served: <code>/fromcubes/sensors</code>.</p>
+    <p>Double-click the <strong>Sensor Portal</strong> node. The <strong>JSX</strong> tab holds the page's <code>App()</code> component in a Monaco editor with JSX highlighting, Tailwind class completion and tag completion for your shared components. The <strong>URL sub-path</strong> field — set in the <strong>Properties</strong> tab next to it (here <code>sensors</code>) — decides where the page is served: <code>/fromcubes/sensors</code>.</p>
     <figure>
       <a href="img/04-edit-portal-jsx.png"><img src="img/04-edit-portal-jsx.png" alt="portal-react node edit dialog with the App component JSX visible in the Monaco editor" loading="lazy"></a>
       <figcaption>The portal node editor — React code exactly as you write it, compiled at deploy.</figcaption>
@@ -362,8 +364,8 @@ return msg;</pre>
     <h2>Open the dashboard</h2>
     <p>Navigate to <code>http://&lt;your-host&gt;:1880/fromcubes/sensors</code>. The gauges animate every two seconds as the inject node fires; every open tab stays in sync because broadcast messages reach all connected clients. Clicking <strong>Refresh</strong> emits a message on the portal node's output wire — check the debug sidebar.</p>
     <figure>
-      <a href="img/06-dashboard.png"><img src="img/06-dashboard.png" alt="Live Sensor Portal dashboard with three animated gauges: temperature, humidity, pressure" loading="lazy"></a>
-      <figcaption>The finished portal at <em>/fromcubes/sensors</em> — live data, zero client-side compilation.</figcaption>
+      <a href="img/06-dashboard.gif"><img src="img/06-dashboard.gif" alt="Live Sensor Portal dashboard with three animated gauges: temperature, humidity, pressure" loading="lazy"></a>
+      <figcaption>The finished portal at <em>/fromcubes/sensors</em> — live data updating every 2 s, zero client-side compilation.</figcaption>
     </figure>
   </div>
 </section>
