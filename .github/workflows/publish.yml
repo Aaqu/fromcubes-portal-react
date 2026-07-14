@@ -48,6 +48,15 @@ jobs:
             echo "version_changed=false" >> $GITHUB_OUTPUT
           fi
 
+      # npm 11 no longer reads README.md into the publish manifest, so the
+      # registry packument (and flows.nodered.org, which renders it) would get
+      # an empty readme. Inject it explicitly just before publishing — CI-only,
+      # the committed package.json stays clean.
+      - name: Embed readme in manifest
+        if: steps.check.outputs.version_changed == 'true'
+        run: |
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json','utf8'));p.readme=fs.readFileSync('README.md','utf8');fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+
       - name: Publish
         if: steps.check.outputs.version_changed == 'true'
         env:
