@@ -219,7 +219,7 @@
     </div>
     <div class="feature">
       <h3>🔌 Live WebSocket data</h3>
-      <p>The <code style="font-family:var(--mono)">useNodeRed()</code> hook binds <em>msg.payload</em> to React state and sends events back to the flow.</p>
+      <p>The <code style="font-family:var(--mono)">useNodeRed()</code> hook binds <em>msg.payload</em> to React state and sends events back to the flow. Route to one tab, one user, all logged-in sessions, or everyone.</p>
     </div>
     <div class="feature">
       <h3>🧩 Shared components</h3>
@@ -376,19 +376,29 @@ return msg;</pre>
     <span class="step-tag"><span class="n">7</span> Reference</span>
     <h2>The <code style="font-size:.85em">useNodeRed()</code> hook</h2>
     <p>Every portal page gets one hook that is the whole runtime API:</p>
-    <pre><span class="k">const</span> { data, send, user, portalClient } = <span class="f">useNodeRed</span>();</pre>
+    <pre><span class="k">const</span> { data, send, user, portalClient, authRequired } = <span class="f">useNodeRed</span>();</pre>
     <div class="table-scroll">
     <table>
       <tr><th style="width:160px">Field</th><th>Description</th></tr>
-      <tr><td><code>data</code></td><td>Reactive value of the last <code>msg.payload</code> received on the node's input. Re-renders the component on every message.</td></tr>
+      <tr><td><code>data</code></td><td>Reactive value of the last <code>msg.payload</code> received on the node's input. Re-renders the component on every message. Starts as <code>null</code> — nothing is cached server-side, so push periodically or request initial state with <code>send({}, "init")</code>.</td></tr>
       <tr><td><code>send(payload, topic?)</code></td><td>Emits a message on the portal node's output wire. The message carries <code>msg._client</code> so replies can target just this browser tab.</td></tr>
       <tr><td><code>user</code></td><td>Portal auth data forwarded by a reverse proxy (<code>x-portal-user-*</code> headers), or <code>null</code>.</td></tr>
       <tr><td><code>portalClient</code></td><td>Unique id of this session/tab, assigned by the server — useful for per-client state.</td></tr>
+      <tr><td><code>authRequired</code></td><td><code>true</code> when this session is anonymous on a portal with <em>Authenticated-only delivery</em> enabled — render a login hint instead of an empty page.</td></tr>
     </table>
     </div>
     <div class="callout blue">
       <strong>Targeting clients from the flow:</strong> reply with the incoming <code>msg._client</code> intact to answer one tab,
-      strip <code>portalClient</code> to reach all tabs of one user, or omit <code>msg._client</code> entirely to broadcast.
+      strip <code>portalClient</code> to reach all tabs of one user, set
+      <code>msg._client = { authenticated: true }</code> to reach every logged-in session,
+      or omit <code>msg._client</code> entirely to broadcast.
+    </div>
+    <div class="callout blue" style="margin-top:16px">
+      <strong>Authenticated-only delivery:</strong> a checkbox on the portal node flips the default —
+      untargeted messages then go only to sessions with <code>x-portal-user-*</code> identity headers,
+      and anonymous visitors receive a one-time <code>auth_required</code> frame
+      (surfaced as <code>authRequired</code> above). Force a true broadcast with
+      <code>msg._client = { authenticated: false }</code>.
     </div>
     <h2 style="margin-top:44px">Where to go next</h2>
     <ul class="plain">
