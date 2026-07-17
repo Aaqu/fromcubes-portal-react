@@ -24,6 +24,7 @@
  * @property {string}  [pageTitle]       `<title>` for the served HTML page.
  * @property {string}  [customHead]      Raw HTML injected into `<head>` (trusted-author content).
  * @property {boolean} [portalAuth]      Read `x-portal-user-*` headers from incoming HTTP requests.
+ * @property {boolean} [authOnly]        Deliver `_client`-less msgs only to authenticated sessions (auth-cast default).
  * @property {boolean} [showWsStatus]    Render the in-page `#__cs` connection badge.
  * @property {Array<LibSpec>} [libs]    npm packages auto-installed at deploy via `dynamicModuleList`.
  */
@@ -587,6 +588,7 @@ module.exports = function (RED) {
     const pageTitle = config.pageTitle || "Portal";
     const customHead = config.customHead || "";
     const portalAuth = config.portalAuth === true;
+    const authOnly = config.authOnly === true;
     const showWsStatus = config.showWsStatus === true;
     const libs = config.libs || [];
 
@@ -962,12 +964,14 @@ module.exports = function (RED) {
             "function useNodeRed() {",
             "  const [data, setData] = React.useState(window.__NR._lastData);",
             "  React.useEffect(() => window.__NR.subscribe(setData), []);",
+            "  const [authRequired, setAuthRequired] = React.useState(window.__NR._authRequired);",
+            "  React.useEffect(() => window.__NR.subscribeAuth(setAuthRequired), []);",
             "  const send = React.useCallback((payload, topic) => {",
             "    window.__NR.send(payload, topic);",
             "  }, []);",
             "  const user = window.__NR._user || null;",
             "  const portalClient = window.__NR._portalClient;",
-            "  return { data, send, user, portalClient };",
+            "  return { data, send, user, portalClient, authRequired };",
             "}",
           ].join("\n"),
           "",
@@ -1401,6 +1405,15 @@ module.exports = function (RED) {
           // Send assigned portalClient to browser
           wsSend(ws, { type: "hello", portalClient });
 
+          // Authenticated-only delivery: tell an anonymous session up front
+          // that it will not receive default-routed data, so the page can
+          // render a login hint instead of staying silently empty. One frame
+          // per connection — never per skipped message (that would leak
+          // traffic timing to unauthenticated clients).
+          if (authOnly && !ws._portalUser) {
+            wsSend(ws, { type: "auth_required" });
+          }
+
           // Degraded warning — show banner, not full overlay.
           if (cs?.compiled?.error && cs?.lastGood) {
             wsSend(ws, {
@@ -1512,7 +1525,7 @@ module.exports = function (RED) {
       node.on("input", (msg, send, done) => {
         // Target Node-RED ≥4.0: `done` is always present. No defensive guard.
         try {
-          router.route(msg, { clients, userIndex, sendTo });
+          router.route(msg, { clients, userIndex, sendTo, authOnly });
           // No updateStatus() here — client count only changes on WS
           // connect/disconnect, and emitting a status event per routed msg
           // floods the editor comms channel on high-rate streams.

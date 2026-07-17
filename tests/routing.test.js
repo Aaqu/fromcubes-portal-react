@@ -232,6 +232,58 @@ describe("router.route — auth-cast", () => {
   });
 });
 
+describe("router.route — authOnly (authenticated-only delivery)", () => {
+  it("untargeted msg becomes auth-cast: anonymous sessions are skipped", () => {
+    const ctx = setupCtx();
+    ctx.authOnly = true;
+    const alice = ctx.addClient("A", "u1");
+    const anon = ctx.addClient("X");
+
+    const result = route({ payload: "default" }, ctx);
+    expect(result).toEqual({ mode: "auth-cast", delivered: 1 });
+    expect(alice.sent).toHaveLength(1);
+    expect(anon.sent).toHaveLength(0);
+  });
+
+  it("explicit { authenticated: false } forces a true broadcast", () => {
+    const ctx = setupCtx();
+    ctx.authOnly = true;
+    const alice = ctx.addClient("A", "u1");
+    const anon = ctx.addClient("X");
+
+    const result = route(
+      { payload: "public", _client: { authenticated: false } },
+      ctx,
+    );
+    expect(result).toEqual({ mode: "broadcast", delivered: 2 });
+    expect(alice.sent).toHaveLength(1);
+    expect(anon.sent).toHaveLength(1);
+  });
+
+  it("specific targets are unaffected by authOnly", () => {
+    const ctx = setupCtx();
+    ctx.authOnly = true;
+    const a = ctx.addClient("A", "u1");
+    const b = ctx.addClient("B", "u2");
+
+    const r1 = route({ payload: 1, _client: { portalClient: "B" } }, ctx);
+    expect(r1.mode).toBe("unicast");
+    expect(b.sent).toHaveLength(1);
+
+    const r2 = route({ payload: 1, _client: { userId: "u1" } }, ctx);
+    expect(r2.mode).toBe("user-cast");
+    expect(a.sent).toHaveLength(1);
+  });
+
+  it("authOnly off keeps the untargeted default as broadcast", () => {
+    const ctx = setupCtx();
+    const anon = ctx.addClient("X");
+    const result = route({ payload: 1 }, ctx);
+    expect(result.mode).toBe("broadcast");
+    expect(anon.sent).toHaveLength(1);
+  });
+});
+
 describe("router.route — onCanSendTo enforcement", () => {
   it("sendTo returning false blocks delivery to that ws", () => {
     const ctx = setupCtx();

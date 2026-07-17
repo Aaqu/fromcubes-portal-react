@@ -356,6 +356,7 @@ Frames are JSON. The browser-side bridge is `window.__NR` (in
 | Direction | Type | Payload | Purpose |
 |---|---|---|---|
 | ← server | `hello` | `{ portalClient }` | Server-assigned session ID for this tab |
+| ← server | `auth_required` | `{}` | Sent once after `hello` to anonymous sessions of an authenticated-only portal; surfaces as `useNodeRed().authRequired` |
 | ← server | `version` | `{ hash }` | Content hash for deploy-reload detection (empty hash = ignore) |
 | ← server | `data` | `{ payload, topic? }` | Routed flow message |
 | ← server | `building` | `{}` | Server is rebuilding; browser shows the building overlay |
@@ -399,6 +400,7 @@ ws.addEventListener("message", (evt) => {
   const m = JSON.parse(evt.data);
   switch (m.type) {
     case "hello":    console.log("connected as", m.portalClient); break;
+    case "auth_required": console.warn("anonymous on an auth-only portal"); break;
     case "version":  /* m.hash — only needed for reload-on-redeploy */ break;
     case "data":     console.log("payload:", m.payload); break;
     case "error":    console.warn("server error:", m.message); break;
@@ -442,9 +444,17 @@ flowchart TD
   Q2 -->|no| Q3{"_client.username?"}
   Q3 -->|yes| UCN["user-cast fallback (O(N) scan)"]
   Q3 -->|no| Q4{"_client.authenticated?"}
-  Q4 -->|yes| AC["auth-cast → sessions with a portal user"]
-  Q4 -->|no| BC["broadcast → all clients"]
+  Q4 -->|truthy| AC["auth-cast → sessions with a portal user"]
+  Q4 -->|"absent + node authOnly"| AC
+  Q4 -->|"false / absent"| BC["broadcast → all clients"]
 ```
+
+With the node's **Authenticated-only delivery** setting (`ctx.authOnly`), an
+untargeted msg defaults to auth-cast; `_client = { authenticated: false }` is
+the explicit escape back to a true broadcast. Anonymous sessions of such a
+portal receive one `auth_required` frame right after `hello` — once per
+connection, never per skipped message, so they learn nothing about traffic
+volume or timing.
 
 Every send goes through `sendTo()` — the single chokepoint that applies the
 `onCanSendTo` hook and handles dead sockets. `route()` returns `{ mode, delivered }`

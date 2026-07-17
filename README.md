@@ -74,6 +74,7 @@ const {
   send,          // send(payload, topic?) — emit msg on output wire
   user,          // portal user object (when Portal Auth is enabled), or null
   portalClient,  // unique session/tab ID assigned by server on connect
+  authRequired,  // true when this session is anonymous on an authenticated-only portal
 } = useNodeRed();
 ```
 
@@ -96,6 +97,7 @@ In the flow, catch `topic === "init"`, look up the state (per-user via `msg._cli
 | Page Title | Browser tab title |
 | npm Packages | Comma-separated, e.g. `d3, three, @react-three/fiber` |
 | Portal Auth | Enable portal user header extraction (see Multi-user) |
+| Authenticated-only delivery | Untargeted msgs (no `msg._client`) go only to sessions with portal identity headers; anonymous sessions get an `auth_required` frame on connect (see Multi-user). Off by default. |
 | Show WS status | Small "fromcubes • connected/disconnected" badge in the page's bottom-right corner (off by default) |
 | Head HTML | Extra trusted-author `<head>` tags (CDN, fonts, CSS, scripts). Runs in the public portal page. |
 | Code Editor | Monaco with JSX — must define `<App />` |
@@ -190,6 +192,22 @@ return msg;
 ```
 
 **Auth-cast vs broadcast.** Broadcast reaches every connected client, including anonymous ones. Auth-cast reaches only sessions that arrived with `x-portal-user-*` identity headers. Use auth-cast for data that any logged-in user may see; use broadcast only for data that is genuinely public. Nothing is cached server-side — each mode delivers to the clients connected at send time.
+
+### Authenticated-only delivery (fail-safe default)
+
+With the **Authenticated-only delivery** checkbox enabled on the node, an untargeted `msg` (no `msg._client`) is delivered as an **auth-cast** instead of a broadcast — a forgotten `_client` then narrows delivery to logged-in sessions rather than leaking to anonymous ones. A true broadcast stays available explicitly:
+
+```javascript
+msg._client = { authenticated: false };  // deliberate broadcast, anonymous included
+return msg;
+```
+
+Anonymous sessions are told up front: right after `hello` the server sends a single `auth_required` frame (once per connection — never per skipped message, so unauthenticated clients learn nothing about traffic volume or timing). The hook exposes it so the page can render a login hint instead of staying silently empty:
+
+```jsx
+const { data, authRequired } = useNodeRed();
+if (authRequired) return <p className="p-4 text-zinc-500">Log in to see this data.</p>;
+```
 
 **Anti-spoof guarantee.** On every inbound message the server overwrites `msg._client` from scratch using the socket's own `portalClient` and the user data captured at connect. A browser cannot forge `_client` — whatever it puts there is discarded.
 

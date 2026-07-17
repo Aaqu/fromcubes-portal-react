@@ -64,7 +64,7 @@
       const libContent = [
         "declare const React: any;",
         "declare const ReactDOM: any;",
-        "declare function useNodeRed(): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null };",
+        "declare function useNodeRed(): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null; authRequired: boolean };",
       ].join("\n");
       console.log(PREFIX, "addExtraLib globals.d.ts");
       jsDef.addExtraLib(libContent, "file:///globals.d.ts");
@@ -1645,6 +1645,23 @@ function useDebounce(value, ms = 300) {
         <label style="width:auto;">
           <input
             type="checkbox"
+            id="node-input-authOnly"
+            style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
+          />
+          Authenticated-only delivery
+        </label>
+        <div style="font-size:11px;opacity:.5;margin-top:4px;margin-left:4px;">
+          Messages without <code>msg._client</code> go only to sessions with
+          portal identity headers. Anonymous sessions get an
+          <code>auth_required</code> frame on connect
+          (<code>useNodeRed().authRequired</code>). Force a true broadcast with
+          <code>msg._client = { authenticated: false }</code>.
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:12px;">
+        <label style="width:auto;">
+          <input
+            type="checkbox"
             id="node-input-showWsStatus"
             style="width:auto;margin:0 8px 0 0;vertical-align:middle;"
           />
@@ -1751,6 +1768,7 @@ function useDebounce(value, ms = 300) {
         },
         customHead: { value: "" },
         portalAuth: { value: false },
+        authOnly: { value: false },
         showWsStatus: { value: false },
         libs: { value: [] },
       },
@@ -2427,7 +2445,10 @@ const { data, send, user, portalClient } = useNodeRed();
       <code>msg._client = { authenticated: true }</code>
     </li>
     <li>
-      To broadcast to all: remove <code>msg._client</code>
+      To broadcast to all: remove <code>msg._client</code>. With
+      <b>Authenticated-only delivery</b> enabled this defaults to the
+      authenticated sessions instead; force a true broadcast with
+      <code>msg._client = { authenticated: false }</code>
     </li>
   </ul>
 

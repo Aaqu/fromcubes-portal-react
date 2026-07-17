@@ -206,6 +206,8 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
           _ws: null,
           _listeners: new Set(),
           _lastData: null,
+          _authRequired: false,
+          _authListeners: new Set(),
           _retries: 0,
           _wasConnected: false,
           _version: null,
@@ -252,6 +254,18 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
                 const m = JSON.parse(e.data);
                 if (m.type === 'hello') {
                   this._portalClient = m.portalClient;
+                  // Reset per-connection auth state: the auth_required frame
+                  // (if still applicable) arrives right after hello, so a
+                  // reconnect against a node whose authOnly was switched off
+                  // does not keep a stale login hint on screen.
+                  if (this._authRequired) {
+                    this._authRequired = false;
+                    this._authListeners.forEach(fn => fn(false));
+                  }
+                }
+                if (m.type === 'auth_required') {
+                  this._authRequired = true;
+                  this._authListeners.forEach(fn => fn(true));
                 }
                 if (m.type === 'version') {
                   // Empty hash = server still in building/error state, ignore (overlay stays).
@@ -316,6 +330,12 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
             this._listeners.add(fn);
             if (this._lastData !== null) fn(this._lastData);
             return () => this._listeners.delete(fn);
+          },
+
+          subscribeAuth(fn) {
+            this._authListeners.add(fn);
+            if (this._authRequired) fn(true);
+            return () => this._authListeners.delete(fn);
           },
 
           send(payload, topic) {
