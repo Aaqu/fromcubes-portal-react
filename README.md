@@ -5,6 +5,7 @@
 [![node](https://img.shields.io/node/v/%40aaqu%2Ffromcubes-portal-react.svg)](https://www.npmjs.com/package/@aaqu/fromcubes-portal-react)
 [![Node-RED](https://img.shields.io/badge/Node--RED-%E2%89%A5%204.0-8f0000.svg)](https://nodered.org)
 [![license](https://img.shields.io/npm/l/%40aaqu%2Ffromcubes-portal-react.svg)](./LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/KYzsfKkYxX)
 
 **📖 Documentation — step-by-step guide with screenshots:** [aaqu.github.io/fromcubes-portal-react](https://aaqu.github.io/fromcubes-portal-react/) — install → import → edit JSX → live dashboard, on one example.
 
@@ -15,6 +16,8 @@
 A Node-RED node that turns any `/fromcubes/<sub-path>` URL into a React page. Write JSX in the editor, deploy, open the URL — your component talks to the flow over WebSocket. No build step, no browser compiler. All portal pages are served under the hardcoded `/fromcubes/` prefix so every node cleanly coexists under one URL tree.
 
 For internals, plugin authoring, and the deploy pipeline see [README-DEV.md](./README-DEV.md).
+
+**💬 Questions, feedback, showcase?** Join the [fromcubes Discord](https://discord.gg/KYzsfKkYxX).
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L01UOFRG)
 
