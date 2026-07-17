@@ -5,6 +5,7 @@
 [![node](https://img.shields.io/node/v/%40aaqu%2Ffromcubes-portal-react.svg)](https://www.npmjs.com/package/@aaqu/fromcubes-portal-react)
 [![Node-RED](https://img.shields.io/badge/Node--RED-%E2%89%A5%204.0-8f0000.svg)](https://nodered.org)
 [![license](https://img.shields.io/npm/l/%40aaqu%2Ffromcubes-portal-react.svg)](./LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/KYzsfKkYxX)
 
 **📖 Documentation — step-by-step guide with screenshots:** [aaqu.github.io/fromcubes-portal-react](https://aaqu.github.io/fromcubes-portal-react/) — install → import → edit JSX → live dashboard, on one example.
 
@@ -15,6 +16,8 @@
 A Node-RED node that turns any `/fromcubes/<sub-path>` URL into a React page. Write JSX in the editor, deploy, open the URL — your component talks to the flow over WebSocket. No build step, no browser compiler. All portal pages are served under the hardcoded `/fromcubes/` prefix so every node cleanly coexists under one URL tree.
 
 For internals, plugin authoring, and the deploy pipeline see [README-DEV.md](./README-DEV.md).
+
+**💬 Questions, feedback, showcase?** Join the [fromcubes Discord](https://discord.gg/KYzsfKkYxX).
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L01UOFRG)
 
@@ -74,21 +77,20 @@ const {
   send,          // send(payload, topic?) — emit msg on output wire
   user,          // portal user object (when Portal Auth is enabled), or null
   portalClient,  // unique session/tab ID assigned by server on connect
+  authRequired,  // true when this session is anonymous on an authenticated-only portal
 } = useNodeRed();
 ```
 
-### Recovery on connect
+### Initial data on connect
 
-A freshly-connected client receives the **last broadcast payload** the server has cached for this endpoint, sent as a distinct `recovery` frame. By default it's seeded straight into `data`, so the first render of a new tab shows the most recent value instead of waiting for the next broadcast — same idea as dashboard2's `lastMsg`.
-
-Opt out per page:
+The server does **not** cache payloads — a freshly-loaded page has `data === null` until the flow pushes the next message. For periodic streams that's at most one interval of blankness. For event-driven or per-user data, request the initial state from the component:
 
 ```jsx
-// data stays undefined until a fresh broadcast arrives — no recovery seed
-const { data } = useNodeRed({ ignoreRecovery: true });
+const { data, send } = useNodeRed();
+useEffect(() => { send({}, "init"); }, []);
 ```
 
-The opt-out is page-wide — the strictest call wins. If any component on the page asks to ignore recovery, recovery is dropped for all of them.
+In the flow, catch `topic === "init"`, look up the state (per-user via `msg._client.userId` if needed) and reply — `msg._client` is already set on the inbound message, so the response returns as a unicast to exactly that tab.
 
 ## Node configuration
 
@@ -98,6 +100,7 @@ The opt-out is page-wide — the strictest call wins. If any component on the pa
 | Page Title | Browser tab title |
 | npm Packages | Comma-separated, e.g. `d3, three, @react-three/fiber` |
 | Portal Auth | Enable portal user header extraction (see Multi-user) |
+| Authenticated-only delivery | Untargeted msgs (no `msg._client`) go only to sessions with portal identity headers; anonymous sessions get an `auth_required` frame on connect (see Multi-user). Off by default. |
 | Show WS status | Small "fromcubes • connected/disconnected" badge in the page's bottom-right corner (off by default) |
 | Head HTML | Extra trusted-author `<head>` tags (CDN, fonts, CSS, scripts). Runs in the public portal page. |
 | Code Editor | Monaco with JSX — must define `<App />` |
@@ -142,7 +145,7 @@ function App() {
 
 ## Multi-user / Multi-tenancy
 
-Portal-react has three routing modes — broadcast, user-cast (every tab of one user), and unicast (one specific tab). Everything works without authentication too — user-cast just degrades gracefully when there is no user.
+Portal-react has four routing modes — broadcast, auth-cast (every authenticated session), user-cast (every tab of one user), and unicast (one specific tab). Everything works without authentication too — user-cast and auth-cast just degrade gracefully when there is no user.
 
 ### Identity
 
@@ -184,6 +187,29 @@ return msg;
 // USER-CAST — every tab of a specific user (even ones that just opened)
 msg._client = { userId: "alice" };
 return msg;
+
+// AUTH-CAST — every session that arrived with x-portal-user-* identity;
+// anonymous sessions (no proxy headers) are skipped
+msg._client = { authenticated: true };
+return msg;
+```
+
+**Auth-cast vs broadcast.** Broadcast reaches every connected client, including anonymous ones. Auth-cast reaches only sessions that arrived with `x-portal-user-*` identity headers. Use auth-cast for data that any logged-in user may see; use broadcast only for data that is genuinely public. Nothing is cached server-side — each mode delivers to the clients connected at send time.
+
+### Authenticated-only delivery (fail-safe default)
+
+With the **Authenticated-only delivery** checkbox enabled on the node, an untargeted `msg` (no `msg._client`) is delivered as an **auth-cast** instead of a broadcast — a forgotten `_client` then narrows delivery to logged-in sessions rather than leaking to anonymous ones. A true broadcast stays available explicitly:
+
+```javascript
+msg._client = { authenticated: false };  // deliberate broadcast, anonymous included
+return msg;
+```
+
+Anonymous sessions are told up front: right after `hello` the server sends a single `auth_required` frame (once per connection — never per skipped message, so unauthenticated clients learn nothing about traffic volume or timing). The hook exposes it so the page can render a login hint instead of staying silently empty:
+
+```jsx
+const { data, authRequired } = useNodeRed();
+if (authRequired) return <p className="p-4 text-zinc-500">Log in to see this data.</p>;
 ```
 
 **Anti-spoof guarantee.** On every inbound message the server overwrites `msg._client` from scratch using the socket's own `portalClient` and the user data captured at connect. A browser cannot forge `_client` — whatever it puts there is discarded.
@@ -196,6 +222,7 @@ If **Portal Auth** is off (or no proxy headers arrive), everything still works:
 
 - `broadcast` and `portalClient` unicast: unchanged
 - `user`-cast: gracefully skipped (no `userId` to target)
+- `auth`-cast: delivers to nobody (no session has identity headers)
 - `useNodeRed().user` is `null`
 
 Same model as dashboard 2 — no auth required to use the node.
@@ -245,9 +272,8 @@ Import **Shared Components** first — it provides the UI building blocks (Page,
 | Browser request `/portal-react/css/<hash>.css` returns 404 | The portal's deploy hasn't produced a CSS bundle yet — open the editor, redeploy. If the URL is bookmarked from before a deploy, the hash is stale; reload the portal page itself. |
 | WebSocket reconnects in an endless loop | Reverse-proxy is not forwarding `Upgrade: websocket` on `/fromcubes/<sub-path>/_ws`. Check the proxy config — nginx needs `proxy_set_header Upgrade $http_upgrade`, Traefik needs the `websocket` middleware. |
 | `libs` packages fail to install on deploy | The user-installed npm packages declared in **Libs** install via Node-RED's `dynamicModuleList` mechanism, which needs network access from `userDir` and a writable `node_modules`. Behind a corporate proxy set `npm config set proxy …` for the Node-RED user. |
-| Page loads but `data` stays `undefined` | No input wire has fired yet — broadcast something into the node |
+| Page loads but `data` stays `null` | Nothing has been pushed since the page connected — payloads are not cached server-side. Push periodically, or request initial state from the component (`send({}, "init")` → flow replies) |
 | `user` is `null` even with Portal Auth on | Upstream proxy is not injecting `x-portal-user-*` headers |
-| New tab shows the previous broadcast value | Expected — that's the recovery frame. Use `useNodeRed({ ignoreRecovery: true })` to opt out |
 | Page reloads on every deploy | Expected for code changes; clients soft-reconnect with exponential backoff |
 
 ## Architecture: source AND sink

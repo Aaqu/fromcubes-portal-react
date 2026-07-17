@@ -254,13 +254,13 @@ sequenceDiagram
   Old->>B: ws.close(1001, "node redeployed")
   Old->>RED: remove upgrade listener, close ws.Server,<br/>unregister from ping tick
   Old->>RED: null pageState.compiled/css/cssReady,<br/>clear contentHash
-  Note over Old,RED: route + recovery cache kept on redeploy,<br/>dropped only when removed=true
+  Note over Old,RED: route kept on redeploy,<br/>dropped only when removed=true
   Old-->>RED: done()
   New->>RED: take endpoint ownership, register rebuild cb
   New->>New: rebuild() — cache hit skips esbuild
   New->>RED: (re)mount route + WS upgrade handler
   B->>New: auto-reconnect (exp. backoff)
-  New->>B: version + hello + recovery frames
+  New->>B: version + hello frames
   B->>B: soft-reconnect (no reload) unless hash changed
 ```
 
@@ -274,8 +274,8 @@ sequenceDiagram
   force-kills the close handler at 15 s).
 
 `removed` is `true` when the node is **deleted or disabled** — only then are the
-route, recovery cache, config signature, and disk cache dropped. A plain redeploy
-keeps `pageState[endpoint]` so reconnecting clients hit the same build faster.
+route, config signature, and disk cache dropped. A plain redeploy keeps
+`pageState[endpoint]` so reconnecting clients hit the same build faster.
 
 ## Reload-loop guards
 
@@ -356,9 +356,9 @@ Frames are JSON. The browser-side bridge is `window.__NR` (in
 | Direction | Type | Payload | Purpose |
 |---|---|---|---|
 | ← server | `hello` | `{ portalClient }` | Server-assigned session ID for this tab |
+| ← server | `auth_required` | `{}` | Sent once after `hello` to anonymous sessions of an authenticated-only portal; surfaces as `useNodeRed().authRequired` |
 | ← server | `version` | `{ hash }` | Content hash for deploy-reload detection (empty hash = ignore) |
 | ← server | `data` | `{ payload, topic? }` | Routed flow message |
-| ← server | `recovery` | `{ payload }` | Cached last broadcast at connect; seeds `data` unless `ignoreRecovery` |
 | ← server | `building` | `{}` | Server is rebuilding; browser shows the building overlay |
 | ← server | `error` | `{ message, degraded? }` | Build/runtime error; `degraded:true` → banner over last-good build |
 | → server | `output` | `{ payload, topic? }` | Result of `useNodeRed().send(...)` |
@@ -381,10 +381,9 @@ sequenceDiagram
   S->>S: onIsValidConnection hook (allow)
   S-->>B: version { hash }
   S-->>B: hello { portalClient }
-  S-->>B: recovery { payload }   %% if cached
   loop input wire
     F->>S: msg (node.on "input")
-    S->>S: router.route(msg) → unicast/user-cast/broadcast
+    S->>S: router.route(msg) → unicast/user-cast/auth-cast/broadcast
     S-->>B: data { payload, topic }
   end
   B->>S: output { payload, topic }
@@ -401,9 +400,9 @@ ws.addEventListener("message", (evt) => {
   const m = JSON.parse(evt.data);
   switch (m.type) {
     case "hello":    console.log("connected as", m.portalClient); break;
+    case "auth_required": console.warn("anonymous on an auth-only portal"); break;
     case "version":  /* m.hash — only needed for reload-on-redeploy */ break;
-    case "data":
-    case "recovery": console.log("payload:", m.payload); break;
+    case "data":     console.log("payload:", m.payload); break;
     case "error":    console.warn("server error:", m.message); break;
   }
 });
@@ -413,9 +412,8 @@ ws.addEventListener("open", () => {
 });
 ```
 
-That's the entire contract. Reconnect logic, recovery seeding, and the
-building/error overlays are all browser conveniences layered on top of these
-frames.
+That's the entire contract. Reconnect logic and the building/error overlays are
+all browser conveniences layered on top of these frames.
 
 ## WebSocket lifecycle and heartbeat
 
@@ -445,14 +443,22 @@ flowchart TD
   Q2 -->|yes| UC["user-cast (O(1) via userIndex)"]
   Q2 -->|no| Q3{"_client.username?"}
   Q3 -->|yes| UCN["user-cast fallback (O(N) scan)"]
-  Q3 -->|no| BC["broadcast → all clients"]
+  Q3 -->|no| Q4{"_client.authenticated?"}
+  Q4 -->|truthy| AC["auth-cast → sessions with a portal user"]
+  Q4 -->|"absent + node authOnly"| AC
+  Q4 -->|"false / absent"| BC["broadcast → all clients"]
 ```
+
+With the node's **Authenticated-only delivery** setting (`ctx.authOnly`), an
+untargeted msg defaults to auth-cast; `_client = { authenticated: false }` is
+the explicit escape back to a true broadcast. Anonymous sessions of such a
+portal receive one `auth_required` frame right after `hello` — once per
+connection, never per skipped message, so they learn nothing about traffic
+volume or timing.
 
 Every send goes through `sendTo()` — the single chokepoint that applies the
 `onCanSendTo` hook and handles dead sockets. `route()` returns `{ mode, delivered }`
-for tests/observability; the caller is responsible for mode-keyed side-effects
-(caching the last broadcast payload for new-client recovery, deep-cloned via
-`RED.util.cloneMessage`).
+for tests/observability.
 
 ## Plugin hooks — extending the runtime
 
