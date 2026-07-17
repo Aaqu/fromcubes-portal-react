@@ -77,18 +77,16 @@ const {
 } = useNodeRed();
 ```
 
-### Recovery on connect
+### Initial data on connect
 
-A freshly-connected client receives the **last broadcast payload** the server has cached for this endpoint, sent as a distinct `recovery` frame. By default it's seeded straight into `data`, so the first render of a new tab shows the most recent value instead of waiting for the next broadcast — same idea as dashboard2's `lastMsg`.
-
-Opt out per page:
+The server does **not** cache payloads — a freshly-loaded page has `data === null` until the flow pushes the next message. For periodic streams that's at most one interval of blankness. For event-driven or per-user data, request the initial state from the component:
 
 ```jsx
-// data stays undefined until a fresh broadcast arrives — no recovery seed
-const { data } = useNodeRed({ ignoreRecovery: true });
+const { data, send } = useNodeRed();
+useEffect(() => { send({}, "init"); }, []);
 ```
 
-The opt-out is page-wide — the strictest call wins. If any component on the page asks to ignore recovery, recovery is dropped for all of them.
+In the flow, catch `topic === "init"`, look up the state (per-user via `msg._client.userId` if needed) and reply — `msg._client` is already set on the inbound message, so the response returns as a unicast to exactly that tab.
 
 ## Node configuration
 
@@ -191,7 +189,7 @@ msg._client = { authenticated: true };
 return msg;
 ```
 
-**Auth-cast vs broadcast.** Broadcast payloads are cached and replayed to every freshly-connected client (the `recovery` frame) — including anonymous ones. Auth-cast payloads are **never** cached, so a client without identity headers cannot receive them, not even via recovery. Use auth-cast for data that any logged-in user may see; use broadcast only for data that is genuinely public.
+**Auth-cast vs broadcast.** Broadcast reaches every connected client, including anonymous ones. Auth-cast reaches only sessions that arrived with `x-portal-user-*` identity headers. Use auth-cast for data that any logged-in user may see; use broadcast only for data that is genuinely public. Nothing is cached server-side — each mode delivers to the clients connected at send time.
 
 **Anti-spoof guarantee.** On every inbound message the server overwrites `msg._client` from scratch using the socket's own `portalClient` and the user data captured at connect. A browser cannot forge `_client` — whatever it puts there is discarded.
 
@@ -253,9 +251,8 @@ Import **Shared Components** first — it provides the UI building blocks (Page,
 | Browser request `/portal-react/css/<hash>.css` returns 404 | The portal's deploy hasn't produced a CSS bundle yet — open the editor, redeploy. If the URL is bookmarked from before a deploy, the hash is stale; reload the portal page itself. |
 | WebSocket reconnects in an endless loop | Reverse-proxy is not forwarding `Upgrade: websocket` on `/fromcubes/<sub-path>/_ws`. Check the proxy config — nginx needs `proxy_set_header Upgrade $http_upgrade`, Traefik needs the `websocket` middleware. |
 | `libs` packages fail to install on deploy | The user-installed npm packages declared in **Libs** install via Node-RED's `dynamicModuleList` mechanism, which needs network access from `userDir` and a writable `node_modules`. Behind a corporate proxy set `npm config set proxy …` for the Node-RED user. |
-| Page loads but `data` stays `undefined` | No input wire has fired yet — broadcast something into the node |
+| Page loads but `data` stays `null` | Nothing has been pushed since the page connected — payloads are not cached server-side. Push periodically, or request initial state from the component (`send({}, "init")` → flow replies) |
 | `user` is `null` even with Portal Auth on | Upstream proxy is not injecting `x-portal-user-*` headers |
-| New tab shows the previous broadcast value | Expected — that's the recovery frame. Use `useNodeRed({ ignoreRecovery: true })` to opt out |
 | Page reloads on every deploy | Expected for code changes; clients soft-reconnect with exponential backoff |
 
 ## Architecture: source AND sink

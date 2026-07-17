@@ -64,7 +64,7 @@
       const libContent = [
         "declare const React: any;",
         "declare const ReactDOM: any;",
-        "declare function useNodeRed(opts?: { ignoreRecovery?: boolean }): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null };",
+        "declare function useNodeRed(): { data: any; send: (payload: any, topic?: string) => void; user: { userId?: string; userName?: string; username?: string; email?: string; role?: string; groups?: any[] } | null; portalClient: string | null };",
       ].join("\n");
       console.log(PREFIX, "addExtraLib globals.d.ts");
       jsDef.addExtraLib(libContent, "file:///globals.d.ts");
@@ -2424,8 +2424,7 @@ const { data, send, user, portalClient } = useNodeRed();
     </li>
     <li>
       To target every authenticated session (skips anonymous):
-      <code>msg._client = { authenticated: true }</code> — never cached,
-      so anonymous clients cannot recover it on connect
+      <code>msg._client = { authenticated: true }</code>
     </li>
     <li>
       To broadcast to all: remove <code>msg._client</code>

@@ -14,8 +14,6 @@
  *   5. otherwise                   → broadcast
  *
  * Returns a shallow summary `{ mode, delivered }` for observability/tests.
- * The caller is responsible for any side-effects keyed off the mode
- * (e.g. caching the last broadcast payload for new-client recovery).
  */
 
 /**
@@ -75,9 +73,7 @@ function route(msg, ctx) {
     // Auth-cast: every session that arrived with x-portal-user-* identity.
     // Anonymous sessions (no proxy headers) are skipped. Truthy check on
     // purpose — a sloppy `authenticated: "yes"` must narrow delivery, not
-    // silently widen it to a broadcast. Not a broadcast — the caller must
-    // NOT feed this into the recovery cache, or anonymous clients would
-    // receive it on connect.
+    // silently widen it to a broadcast.
     clients.forEach((ws) => {
       if (ws._portalUser) {
         if (sendTo(ws, frame, msg)) delivered++;

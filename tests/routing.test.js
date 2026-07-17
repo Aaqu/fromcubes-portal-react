@@ -117,7 +117,7 @@ describe("router.route — broadcast", () => {
     expect(b.sent).toHaveLength(1);
   });
 
-  it("returns mode 'broadcast' so the caller can update its own recovery cache", () => {
+  it("reports mode 'broadcast' for observability", () => {
     const ctx = setupCtx();
     ctx.addClient("A", "u1");
     const result = route({ payload: { v: 42 } }, ctx);
@@ -221,14 +221,14 @@ describe("router.route — auth-cast", () => {
     expect(anon.sent).toHaveLength(1);
   });
 
-  it("mode is not 'broadcast', so the caller never recovery-caches auth-cast payloads", () => {
+  it("mode is 'auth-cast', never 'broadcast'", () => {
     const ctx = setupCtx();
     ctx.addClient("A", "u1");
     const result = route(
       { payload: "secret", _client: { authenticated: true } },
       ctx,
     );
-    expect(result.mode).not.toBe("broadcast");
+    expect(result.mode).toBe("auth-cast");
   });
 });
 

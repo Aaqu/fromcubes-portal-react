@@ -514,12 +514,6 @@ module.exports = function (RED) {
   const hooks = require("./lib/hooks")(RED);
   const router = require("./lib/router");
 
-  // Per-process cache of the last broadcast payload per endpoint.
-  // Lets a freshly-connected client see the most recent broadcast value
-  // (similar to dashboard2's lastMsg recovery). Sent as a distinct
-  // `recovery` WS frame so React can opt out via useNodeRed({ ignoreRecovery: true }).
-  const lastBroadcastCache = new Map();
-
   registerRegistryNodes(RED, {
     registry,
     utilities,
@@ -615,7 +609,7 @@ module.exports = function (RED) {
     endpointOwners[endpoint] = nodeId;
 
     // ── Sub-path changed on redeploy → tear down the previous endpoint ──
-    // Route, pageState, cache and recovery entries of the old URL must go,
+    // Route, pageState and cache entries of the old URL must go,
     // or it keeps serving the "Building…" holding page until restart.
     const prevEndpoint = nodeEndpoints[nodeId];
     if (prevEndpoint && prevEndpoint !== endpoint) {
@@ -629,7 +623,6 @@ module.exports = function (RED) {
       if (endpointOwners[prevEndpoint] === nodeId) {
         delete endpointOwners[prevEndpoint];
       }
-      lastBroadcastCache.delete(prevEndpoint);
     }
     nodeEndpoints[nodeId] = endpoint;
 
@@ -966,12 +959,7 @@ module.exports = function (RED) {
           "",
           "// ── useNodeRed hook ──",
           [
-            "function useNodeRed(opts) {",
-            "  // opts.ignoreRecovery = true → ignore the cached last-broadcast",
-            "  // frame the server sends on connect; data stays undefined until",
-            "  // a fresh broadcast arrives. Latched once globally — strictest",
-            "  // call wins (any caller asking to ignore disables recovery for all).",
-            "  if (opts && opts.ignoreRecovery) window.__NR._ignoreRecovery = true;",
+            "function useNodeRed() {",
             "  const [data, setData] = React.useState(window.__NR._lastData);",
             "  React.useEffect(() => window.__NR.subscribe(setData), []);",
             "  const send = React.useCallback((payload, topic) => {",
@@ -1422,14 +1410,6 @@ module.exports = function (RED) {
             });
           }
 
-          // Send the cached last broadcast (if any) as a distinct
-          // `recovery` frame. The browser uses this to seed `data` on a
-          // fresh connection. React components can opt out via
-          // useNodeRed({ ignoreRecovery: true }).
-          if (lastBroadcastCache.has(endpoint)) {
-            wsSend(ws, { type: "recovery", payload: lastBroadcastCache.get(endpoint) });
-          }
-
           // Heartbeat — detect dead sockets via WS ping/pong. Browser
           // auto-replies to ping frames, no client JS needed. The actual
           // ping interval lives in the module-level `_pingSweep` tick;
@@ -1532,20 +1512,7 @@ module.exports = function (RED) {
       node.on("input", (msg, send, done) => {
         // Target Node-RED ≥4.0: `done` is always present. No defensive guard.
         try {
-          const result = router.route(msg, { clients, userIndex, sendTo });
-          // Cache the latest broadcast payload so freshly-connected clients
-          // can recover it via the `recovery` frame on connect. Deep-clone via
-          // RED.util.cloneMessage so a downstream mutation cannot retroactively
-          // change what a fresh client sees on connect.
-          if (result.mode === "broadcast") {
-            let cached;
-            try {
-              cached = RED.util.cloneMessage({ p: msg.payload }).p;
-            } catch (_) {
-              cached = msg.payload;
-            }
-            lastBroadcastCache.set(endpoint, cached);
-          }
+          router.route(msg, { clients, userIndex, sendTo });
           // No updateStatus() here — client count only changes on WS
           // connect/disconnect, and emitting a status event per routed msg
           // floods the editor comms channel on high-rate streams.
@@ -1629,10 +1596,9 @@ module.exports = function (RED) {
             delete endpointOwners[endpoint];
           }
 
-          // Drop the recovery cache on full removal/disable; on a plain
-          // redeploy keep it so reconnecting clients still recover.
+          // On full removal/disable drop the per-node bookkeeping; a plain
+          // redeploy keeps it so the reconstructed node can compare state.
           if (removed) {
-            lastBroadcastCache.delete(endpoint);
             delete portalSig[nodeId];
             delete nodeEndpoints[nodeId];
           }

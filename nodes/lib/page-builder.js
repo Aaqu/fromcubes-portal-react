@@ -206,7 +206,6 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
           _ws: null,
           _listeners: new Set(),
           _lastData: null,
-          _ignoreRecovery: false,
           _retries: 0,
           _wasConnected: false,
           _version: null,
@@ -294,14 +293,6 @@ function buildPage(title, transpiledJs, wsPath, customHead, cssHash, user, showW
                   }
                 }
                 if (m.type === 'data') {
-                  this._lastData = m.payload;
-                  this._listeners.forEach(fn => fn(m.payload));
-                }
-                if (m.type === 'recovery') {
-                  // Cached last broadcast at connect time. Seeded into
-                  // _lastData unless the page opted out via
-                  // useNodeRed({ ignoreRecovery: true }).
-                  if (this._ignoreRecovery) return;
                   this._lastData = m.payload;
                   this._listeners.forEach(fn => fn(m.payload));
                 }
