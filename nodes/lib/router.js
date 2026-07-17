@@ -7,10 +7,11 @@
  * Node-RED runtime.
  *
  * Routing modes, in priority order:
- *   1. msg._client.portalClient → unicast to that one session
- *   2. msg._client.userId        → user-cast (O(1) via userIndex)
- *   3. msg._client.username      → user-cast fallback (O(N) scan)
- *   4. otherwise                 → broadcast
+ *   1. msg._client.portalClient   → unicast to that one session
+ *   2. msg._client.userId          → user-cast (O(1) via userIndex)
+ *   3. msg._client.username        → user-cast fallback (O(N) scan)
+ *   4. msg._client.authenticated   → auth-cast (every session with a portal user)
+ *   5. otherwise                   → broadcast
  *
  * Returns a shallow summary `{ mode, delivered }` for observability/tests.
  * The caller is responsible for any side-effects keyed off the mode
@@ -26,7 +27,7 @@
 
 /**
  * @typedef {Object} RouteResult
- * @property {"unicast"|"user-cast"|"broadcast"} mode
+ * @property {"unicast"|"user-cast"|"auth-cast"|"broadcast"} mode
  * @property {number} delivered
  */
 
@@ -68,6 +69,21 @@ function route(msg, ctx) {
       }
     });
     return { mode: "user-cast", delivered };
+  }
+
+  if (target && target.authenticated) {
+    // Auth-cast: every session that arrived with x-portal-user-* identity.
+    // Anonymous sessions (no proxy headers) are skipped. Truthy check on
+    // purpose — a sloppy `authenticated: "yes"` must narrow delivery, not
+    // silently widen it to a broadcast. Not a broadcast — the caller must
+    // NOT feed this into the recovery cache, or anonymous clients would
+    // receive it on connect.
+    clients.forEach((ws) => {
+      if (ws._portalUser) {
+        if (sendTo(ws, frame, msg)) delivered++;
+      }
+    });
+    return { mode: "auth-cast", delivered };
   }
 
   // Broadcast.

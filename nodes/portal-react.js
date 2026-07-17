@@ -37,6 +37,7 @@
  * @property {string}                  [email]
  * @property {string}                  [role]
  * @property {string|Array<string>}    [groups]
+ * @property {boolean}                 [authenticated] Outbound targeting only: deliver to every session with a portal user.
  */
 
 /**

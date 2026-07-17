@@ -142,7 +142,7 @@ function App() {
 
 ## Multi-user / Multi-tenancy
 
-Portal-react has three routing modes — broadcast, user-cast (every tab of one user), and unicast (one specific tab). Everything works without authentication too — user-cast just degrades gracefully when there is no user.
+Portal-react has four routing modes — broadcast, auth-cast (every authenticated session), user-cast (every tab of one user), and unicast (one specific tab). Everything works without authentication too — user-cast and auth-cast just degrade gracefully when there is no user.
 
 ### Identity
 
@@ -184,7 +184,14 @@ return msg;
 // USER-CAST — every tab of a specific user (even ones that just opened)
 msg._client = { userId: "alice" };
 return msg;
+
+// AUTH-CAST — every session that arrived with x-portal-user-* identity;
+// anonymous sessions (no proxy headers) are skipped
+msg._client = { authenticated: true };
+return msg;
 ```
+
+**Auth-cast vs broadcast.** Broadcast payloads are cached and replayed to every freshly-connected client (the `recovery` frame) — including anonymous ones. Auth-cast payloads are **never** cached, so a client without identity headers cannot receive them, not even via recovery. Use auth-cast for data that any logged-in user may see; use broadcast only for data that is genuinely public.
 
 **Anti-spoof guarantee.** On every inbound message the server overwrites `msg._client` from scratch using the socket's own `portalClient` and the user data captured at connect. A browser cannot forge `_client` — whatever it puts there is discarded.
 
@@ -196,6 +203,7 @@ If **Portal Auth** is off (or no proxy headers arrive), everything still works:
 
 - `broadcast` and `portalClient` unicast: unchanged
 - `user`-cast: gracefully skipped (no `userId` to target)
+- `auth`-cast: delivers to nobody (no session has identity headers)
 - `useNodeRed().user` is `null`
 
 Same model as dashboard 2 — no auth required to use the node.

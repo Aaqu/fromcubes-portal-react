@@ -2423,6 +2423,11 @@ const { data, send, user, portalClient } = useNodeRed();
       <code>msg._client = { userId: "..." }</code> (no portalClient)
     </li>
     <li>
+      To target every authenticated session (skips anonymous):
+      <code>msg._client = { authenticated: true }</code> — never cached,
+      so anonymous clients cannot recover it on connect
+    </li>
+    <li>
       To broadcast to all: remove <code>msg._client</code>
     </li>
   </ul>
